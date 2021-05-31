@@ -1,0 +1,3148 @@
+---
+title: "Spatio-temporal Analysis of Rape and Dowry Deaths in Uttar Pradesh, India (2001-2014)"
+author: "Group 5"
+date: "25/04/2021"
+output:
+  html_document: default
+  pdf_document: default
+keep_tex: yes
+fig_caption: yes.
+geometry: margin=1in
+fontsize: 11pt
+bibliography: biblio.bib
+abstract:  Rape and dowry deaths remain critical issues in India, where in Uttar Pradesh a strong elevation in both crimes was seen during 2005-2014. This report aims to investigate rape and dowry death spatial and temporal patterns of 70 districts in Uttar Pradesh during 2001-2014. Models were fitted using Markov chain Monte-Carlo techniques. We constructed a BYM model to evaluate spatial patterns, and separable spatio-temporal and spatio-temporal with type-I interaction models to evaluate spatio-temporal patterns. Model performance was assessed by WAIC, where the BYM model demonstrated the best performance. The spatial relative risk of rape was high in the Northeast and Southeast regions, which was associated with high probabilities of excessive risk (>80%). High spatial relative risk of dowry deaths was found in the central regions. For both crimes, the total variance was largely explained by the spatially structured random effect and hence, their risk was particularly associated with the spatial dimension. Further research must consider the data at a greater timescale and seek to extend spatiotemporal modelling through joint disease mapping and other space-time interactions. Our results offer an opportunity to direct policy and educational programs at particular regions of Uttar Pradesh to reduce rape and dowry death.  
+---
+
+<style type="text/css">
+
+}
+h1.title {
+  font-size: 13pt;
+}
+h1 { /* Header 1 */
+  font-size: 12pt;
+}
+h2 { /* Header 2 */
+    font-size: 10pt;
+}
+h3 { /* Header 3 */
+    font-size: 8pt;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE, fig.path='Figs/')
+
+```
+```{r eval=TRUE}
+# Load the libraries you will use for the mini-project report
+library(sp)           # tools for spatial data
+library(spData)
+library(sf)           # tools for spatial data
+library(rgeos)
+library(maptools)     # tools for reading and handling spatial objects
+library(spdep)        # to create the adjacency matrix from the shape file
+library(nimble)       # tools to perform MCMC in R
+library(coda)         # tools for convergence diagnostics
+library(mcmcplots)    # tools for mcmc plots
+library(rgdal)        # tools for geospatial data
+library(viridis)      # provides colour palettes for maps and plots
+library(RColorBrewer) # provides colour palettes for maps and plots
+library(wesanderson)  # provides colour palettes for maps and plots 
+                      # based on Was Anderson's movies
+library(tmap)         # tools for plotting maps
+library(ggplot2)      # tools for plotting maps
+library(ggmcmc)       # tools for MCMC diagnostics using ggplot
+library(broom)        # tools for data cleaning
+library(patchwork)    # tool to put the maps together
+library(gridExtra)    # tool to put the maps together
+library(dplyr)        # tool to merge and handle data
+library(fastDummies)  # package to create dummy variable from factor
+library(knitr)        # For tables in RMarkdown
+library(kableExtra)
+library(tidyr)
+library(raster)
+library(ggpubr)
+```
+# **A.Introduction**
+Crimes against women are a global issue and social acceptability of violence against women leads to elevated levels of violence against women [@krahe2018violence; @russo2006gender; @rahman2004determinants].  However, crimes against women are often under-reported due to stigma [@world2013global]. In this project, we focus on rape and dowry-related deaths in the state Uttar Pradesh, India (2001-2014), which is one of the states with greatest incidence in rape and dowry death [@nationalcrimerecordsbureau2019]. Dowry is a cultural practice that leads to the oppression, torture and murder of women [@kaur2020bride] and rape and dowry are serious problems in India [@raj2014sexual].
+```{r map of India and UP,fig.cap="Figure 1. Map of India and Uttar Pradesh (highlighted in red). Check Supplementary Table 1 (Appendix) for the corresponding district names of Uttar Pradesh",fig.align='center', fig.width=4, fig.height=2}
+
+load("~/Desktop/OneDrive - Imperial College London/DS5_CrimeUttarPradesh/CrimeUttarPradesh.RData")
+
+
+#transform sp to sf file
+India=st_as_sf(carto_india)
+UP=st_as_sf(carto_up)
+
+
+#Map of India that highlights Uttar Pradesh
+par(mfrow=c(1,2),bg="white",bty="o",cex.main=.75,mar=c(0,0,1,0))
+plot(carto_india, border=3, col=terrain.colors(length(carto_india)), axes=F, main="India")
+plot(India$geometry[India$state =='Uttar Pradesh'], col='red', add=TRUE)
+
+plot(carto_up, border=3, col=terrain.colors(length(carto_up)), axes=F, main="Uttar Pradesh")
+text(carto_up,"ID_area",cex=.3,col="black")
+```
+Uttar Pradesh, located in the North-East of India (Figure 1) and being the populous state in India, is socially and income-diverse and has a complex pattern of crimes against women. This study aims to conduct a spatio-temporal analysis of the incidence of rape and dowry deaths in 70 districts of Uttar Pradesh during 2001-2014 to understand the spatial patterns of these two crimes in Uttar Pradesh and their evolution over time. 
+
+# **B.Methodology**
+## **Datasets**
+The datasets consisted of rape and dowry death incidence and SpatialPolygonDataFrame objects. The data included 980 observations of rape cases and dowry deaths over 70 districts in Uttar Pradesh from 2001-2014. The SpatialPolygonDataFrame objects consisted of cartography of India and Uttar Pradesh. 
+The dataset contained the total annual population, observed cases, expected cases, and standardised incidence/mortality ratios of rape and dowry deaths as well as other spatial attributes (e.g. ID area and district names). SMR is the ratio between the number of cases observed in area $i$ and the number of cases expected in area $i$, which allows the quantification risk across all study areas [@lawson2013statistical].
+
+## **Models**
+We proposed a Besag, York and Mollié (BYM) model [@besag1991bayesian] to assess spatial pattern of rape and dowry deaths in Uttar Pradesh. It is one of the most popular hierarchical Bayesian models, which incorporates random effects due to unstructured and spatially structured heterogeneity into a log-linear model for relative risk [@asmarian2016area]. The BYM model for this study was constructed as follows.
+\[
+\begin{equation}
+\begin{aligned}
+\hbox{O}_i & \sim \hbox{Poisson}(E_i \lambda_i); \;\;\; i=1,...,N\\
+\log \lambda_i & = \alpha + \theta_i + \phi_i\\
+\theta_i &\sim \hbox{Normal}(0, \sigma^2_{\theta})\\
+{\bf \phi} & \sim \hbox{ICAR}({\bf W}, \sigma_{\phi}^2) \,\, ,  \sum_i \phi_i  = 0 \\
+\alpha & \sim \text{Uniform}(-\infty, +\infty) \\
+1/\sigma_{\theta}^2 & \sim \hbox{Gamma}(1, 0.001) \\
+1/\sigma_{\phi}^2 & \sim \hbox{Gamma}(0.5, 0.0005) \\
+\end{aligned}
+\end{equation}
+\]
+Where $O$ represents the number of cases observed in area $i$ to N during the period 2001-2014, E represents the number of cases expected in area $i$ during the period 2001-2014, and $W$ is the adjacency matrix, $α$ is the intercept term and $exp(α)$ is the overall relative risk (RR) across the domain. $\lambda_i$ is the SMR in area $i$, $\theta_i$ is the unstructured random effect with marginal variance $\sigma_{\phi}^2$ ,  $\phi_i$ is the spatially structured random effects that follows an iCAR distribution with conditional variance $\sigma_{\theta}^2$ and sum to zero constraint.
+Other parameters of interest are RR ($exp(α+\theta_i+\phi_i)$) which is the total risk of area $i$, residual RR ($exp(\theta_i+\phi_i)$) which is the spatial risk, and posterior probability which shows the uncertainty around the posterior median of residual RRs.
+
+## **Data Analysis**
+We constructed separate models for rape and dowry deaths using NIMBLE [@nimble] within R [@R-base]. We ran two chains using Markov chain Monte-Carlo (MCMC) methods with different initial values, and assessed the convergence through trace plots and the Gelman-Rubin diagnostic (potential scale reduction factor threshold set to 1.0). To avoid potential non-convergence of any parameters of interest, we increased the number of iterations and thinning intervals and iterated this process. Further, we used the posterior distribution to map parameters of interest. We also constructed a separable spatio-temporal model and a spatio-temporal model with a type-I space-time interaction. The best performing model was selected based on having the lowest Watanabe–Akaike Information Criterion (WAIC).
+
+# **C. Results**
+## **Descriptive Analysis**
+To assess the patterns of rapes and dowry deaths in Uttar Pradesh, we computed the spatial and temporal patterns of crude SMRs of rape and dowry through disease mapping. More detailed information on the district-specific crude SMRs of rapes and dowry across years is shown in the Supplementary Figure 3.
+
+A gradient in SMRs from the Northwest to the Southeast part of Uttar Pradesh for both crimes can be interpreted from the two maps despite some differences in their spatial patterns (Figure 2). There were clusters of districts with high rape SMRs in the Northwest and Southeast regions. Meanwhile, high dowry SMRs were observed in most districts in central region.
+```{r map of average SMRs by districts, fig.cap="Figure 2. Map of Average Crude SMRs by Districts over the period 2001-2014",fig.align='center',fig.dim=c(10,2)}
+#aggregate data over geographical area
+agg_data=data %>% group_by(dist) %>% 
+               summarise(rape=sum(rape),
+                         e_rape=sum(e_rape),
+                         dowry=sum(dowry),
+                         e_dowry=sum(e_dowry),
+                         pop=sum(pop))
+agg_data=agg_data %>% mutate (rape_SMR=rape/e_rape, 
+                          dowry_SMR=dowry/e_dowry)
+#joint data
+merged_set <- left_join(UP, agg_data, by = c("dist" = "dist"))
+#rape
+
+merged_set$cat_rape=cut(merged_set$rape_SMR,
+                    breaks = c(min(merged_set$rape_SMR),.5,1,1.5,2,                                       max(merged_set$rape_SMR)),include.lowest                                = T)
+rapeSMR=ggplot()+ geom_sf(data=merged_set,col=NA)+aes(fill=cat_rape)+                      theme_bw() +  
+                  scale_fill_viridis_d(direction = 1)+
+                  guides(fill=guide_legend(title="SMR"))+ 
+                  ggtitle("Map of average Rape SMRs")+      theme(plot.title = element_text(hjust = 0.5,size=10,face="bold"))
+#dowry
+merged_set$cat_dowry=cut(merged_set$dowry_SMR,
+                    breaks = c(min(merged_set$dowry_SMR),.5,1,1.5,2,                                    max(merged_set$dowry_SMR)),include.lowest                                = T)
+dowrySMR=ggplot()+ geom_sf(data=merged_set,col=NA)+aes(fill=cat_dowry)+                     theme_bw() +  
+                   scale_fill_viridis_d(direction = 1)+
+                   guides(fill=guide_legend(title="SMR"))+
+                   ggtitle("Map of average Dowry SMRs")+      theme(plot.title = element_text(hjust = 0.5,size=10,face = "bold"))
+
+rapeSMR|dowrySMR
+
+```
+Additionally, the average rape SMRs showed some similarities in its evolution from that of the average dowry SMRs. Both temporal patterns showed a substantial decrease from 2001 to 2003, followed by a constant rise until 2011 despite small fluctuations in 2004 and 2005. Compared with the continuous elevation in the rape SMRs, the SMRs of dowry dramatically fell below 1.0 during the rest of the study period (See Supplementary Figure 2).
+
+## **Model Analyses**
+The BYM model was the best-performing model for rape and dowry death compared to the spatio-temporal models, as determined by WAIC. Further, not much variation in district-specific temporal patterns was observed after taking into account of the temporal effect for both crimes (See Supplementary Figure 17). Therefore, the temporal resolution was suppressed in our main model analysis and only the spatial random effect has been applied. 
+```{r BYM model, eval=TRUE,echo=FALSE,message=FALSE,error=FALSE}
+#BYM model of rape
+
+rapeBYM<-nimbleCode(
+  {
+    for(i in 1:N){
+      #likelihood
+      O[i]~dpois(mu[i])
+      log(mu[i])<-log(E[i])+alpha+theta[i]+phi[i]
+      
+      #prior
+      theta[i]~dnorm(0,tau.theta)
+      RR[i]<-exp(alpha+theta[i]+phi[i])
+      residRR[i]<-exp(theta[i]+phi[i])
+      PP[i]<-step(residRR[i]-1)
+      
+    }
+  #intrinsic CAR prior on spatial random effect
+    phi[1:N]~dcar_normal(adj[1:L],weights[1:L],num[1:N],tau.phi,zero_mean = 1)
+    
+  #priors
+  alpha~dflat()
+  
+  tau.theta~dgamma(1,0.001)
+  sigma2.theta<-1/tau.theta
+  
+  tau.phi~dgamma(0.5,0.005)
+  sigma2.phi<-1/tau.phi
+  
+  sigma2.phi.marginal <- sd(phi[1:N])*sd(phi[1:N])
+  frac.spatial <-  sigma2.phi.marginal/( sigma2.phi.marginal + sigma2.theta)   
+  overallRR<-exp(alpha)
+  }
+)
+
+#creating adjacency matrix
+UP_nb<-poly2nb(UP)
+UP_nimb<-nb2WB(nb=UP_nb)
+#list of data
+N<-dim(UP)[1]
+
+rapeData=list(
+  O= merged_set$rape
+)
+
+rapeConst<-list(
+                N=N,
+                L=length(UP_nimb$weights),
+                E=merged_set$e_rape,
+                adj=UP_nimb$adj,
+                num=UP_nimb$num,
+                weights=UP_nimb$weights
+)
+
+#set initial values (2 chains)
+inits<- list(
+  list(alpha=0.01,
+       tau.theta=10,
+       tau.phi=1,
+       theta=rep(0.02,times=N),
+       phi=c(rep(0.02,times=N))),
+  list(alpha=0.5,
+       tau.theta=1,
+       tau.phi=0.1,
+       theta=rep(0.05,times=N),
+       phi=c(rep(-0.05,times=N)))
+)
+
+#parameters to monitored
+params<-c("overallRR","RR","PP","residRR","sigma2.theta","sigma2.phi","theta","phi","mu","alpha","frac.spatial", "sigma2.phi.marginal")
+
+#MCMC setting
+ni<-100000
+nt<-10
+nb<-50000
+nc<-2
+
+#MCMC simulations
+rapeBYM.model<-nimbleMCMC(code = rapeBYM,
+                          data=rapeData,
+                          constants = rapeConst,
+                          inits = inits,
+                          monitors=params,
+                          niter = ni,
+                          nburnin = nb,
+                          thin=nt,
+                          nchains = nc,
+                          setSeed = 123,
+                          progressBar = F,
+                          samplesAsCodaMCMC = T,
+                          summary = T,
+                          WAIC = T
+                          )
+#BYM model of dowry
+
+dowryBYM<-nimbleCode(
+  {
+    for(i in 1:N){
+      #likelihood
+      O[i]~dpois(mu[i])
+      log(mu[i])<-log(E[i])+alpha+theta[i]+phi[i]
+      
+      #prior
+      theta[i]~dnorm(0,tau.theta)
+      RR[i]<-exp(alpha+theta[i]+phi[i])
+      residRR[i]<-exp(theta[i]+phi[i])
+      PP[i]<-step(residRR[i]-1)
+      
+    }
+  #intrinsic CAR prior on spatial random effect
+    phi[1:N]~dcar_normal(adj[1:L],weights[1:L],num[1:N],tau.phi,zero_mean = 1)
+    
+  #priors
+  alpha~dflat()
+  
+  tau.theta~dgamma(1,0.001)
+  sigma2.theta<-1/tau.theta
+  
+  tau.phi~dgamma(0.5,0.005)
+  sigma2.phi<-1/tau.phi
+  
+  sigma2.phi.marginal <- sd(phi[1:N])*sd(phi[1:N])
+  frac.spatial <-  sigma2.phi.marginal/( sigma2.phi.marginal + sigma2.theta)   
+  overallRR<-exp(alpha)
+  }
+)
+
+#creating adjacency matrix
+UP_nb<-poly2nb(UP)
+UP_nimb<-nb2WB(nb=UP_nb)
+
+#list of data
+N<-dim(UP)[1]
+
+dowryData=list(
+  O= merged_set$dowry
+)
+
+dowryConst<-list(
+                N=N,
+                L=length(UP_nimb$weights),
+                E=merged_set$e_dowry,
+                adj=UP_nimb$adj,
+                num=UP_nimb$num,
+                weights=UP_nimb$weights
+)
+
+#set initial values (2 chains)
+inits<- list(
+  list(alpha=0.01,
+       tau.theta=10,
+       tau.phi=1,
+       theta=rep(0.02,times=N),
+       phi=c(rep(0.02,times=N))),
+  list(alpha=0.5,
+       tau.theta=1,
+       tau.phi=0.1,
+       theta=rep(0.05,times=N),
+       phi=c(rep(-0.05,times=N)))
+)
+
+#parameters to monitored
+params<-c("overallRR","RR","PP","residRR","sigma2.theta","sigma2.phi","theta","phi","mu","alpha","frac.spatial", "sigma2.phi.marginal")
+
+#MCMC setting
+ni<-50000
+nt<-10
+nb<-10000
+nc<-2
+
+#MCMC simulations
+dowryBYM.model<-nimbleMCMC(code = dowryBYM,
+                          data=dowryData,
+                          constants = dowryConst,
+                          inits = inits,
+                          monitors=params,
+                          niter = ni,
+                          nburnin = nb,
+                          thin=nt,
+                          nchains = nc,
+                          setSeed = 123,
+                          progressBar = F,
+                          samplesAsCodaMCMC = T,
+                          summary = T,
+                          WAIC = T
+                          )
+```
+
+## **Rape crime**
+The results of the BYM model indicate the domination of spatially structured random effect. There are no substantial differences between crude SMRs and smoothed SMRs due to the shrinkage towards the local mean of SMRs. Persistence of the high risks in the most west part of the state after the incorporation of spatial smoothing, suggesting these two regions were at high risk of rape crime (Figure 4).
+```{r map of Rape SMRs of BYM model,fig.cap="Figure 4. Comparison of Maps of Rape SMRs",fig.align='center',fig.dim=c(10,2.7)}
+#maps of Total RR of Rape
+RRrape<-data.frame(RR=rapeBYM.model$summary$all.chains[paste0("RR[", 1:N, "]"), "Median"],ID_area=merged_set[,4])
+
+RRrape$RRcat<-cut(RRrape$RR,
+                  breaks = c(min(RRrape$RR),.5,1,1.5,2,max(RRrape$RR)),
+                  include.lowest = T)
+mapRRrape<-left_join(merged_set,RRrape,by=c("ID_area"="ID_area.ID_area"))
+
+ggplot() + geom_sf(data = mapRRrape,col=NA) + aes(fill = RRcat) +
+  theme_bw() + scale_fill_viridis_d(direction = 1) + 
+  ggtitle("Map of smoothed SMR of Rape",subtitle = "BYM Model")+
+  guides(fill=guide_legend(title="SMR")) + 
+  theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank(),
+                  plot.title = element_text(hjust = 0.5,size=10,face = "bold"),
+                  plot.subtitle = element_text(hjust = 0.5)
+                  )-> rapeSMRBYM
+
+rapeSMR|rapeSMRBYM
+```
+To further explore the spatial patterns of rape crime, we mapped the residual RRs $(exp(\theta_i+\phi_i))$ and posterior probabilities $exp(\theta_i+\phi_i)>1|O$ (Figure 5). It can be concluded that elevated risks of rape crime were district-specific, with high posterior probabilities above 80%.
+```{r Spatial Relative Risk of Rape,fig.cap="Figure 5. Spatial RR and Posterior Probability of Rape",fig.align='center',fig.dim=c(10,3)}
+# maps of residual RR
+
+resRR_PP_rape <- data.frame(resRR=rapeBYM.model$summary$all.chains[paste0("residRR[", 1:N, "]"), "Median"], 
+                       PP=rapeBYM.model$summary$all.chains[paste0("PP[", 1:N, "]"), "Mean"],
+                      ID_area=merged_set[,4])
+
+resRR_PP_rape$resRRcat <- cut(resRR_PP_rape$resRR, breaks=c(min(resRR_PP_rape$resRR), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6,1.8,
+                  max(resRR_PP_rape$resRR)),include.lowest = T)
+
+resRR_PP_rape$PPcat <- cut(resRR_PP_rape$PP, c(0, 0.2, 0.8, 1.00), include.lowest = TRUE)
+
+map_RR_PP_rape<-left_join(merged_set,resRR_PP_rape,by=c("ID_area"="ID_area.ID_area"))
+
+ggplot() + geom_sf(data = map_RR_PP_rape,col=NA) + aes(fill = resRRcat) +
+  theme_bw() + scale_fill_viridis_d(direction = 1) + 
+  guides(fill=guide_legend(title="RR"),size=8) + 
+  ggtitle("Posterior Median of Residual RR",subtitle = "BYM Model")+
+  theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank(),
+                  plot.title = element_text(hjust = 0.5,size=10,face = "bold"),
+                  plot.subtitle = element_text(hjust=0.5)
+                  )-> p1
+#maps of PP
+ggplot() + geom_sf(data = map_RR_PP_rape,col=NA) + aes(fill = PPcat) +
+  theme_bw() +
+  scale_fill_viridis(
+    option = "plasma",
+    name = "Posterior Probability",
+    discrete = T,
+    direction = 1,
+    guide = guide_legend(
+      title.position = 'top',
+      reverse = T
+    )) +ggtitle("Posterior probability of Residual RR") +  theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank(),
+                  plot.title = element_text(hjust = 0.5,size=10,face = "bold")
+                  ) -> p2
+
+p1|p2
+```
+The posterior summary statistics showed that more than 99% of the total variance was explained by the structured spatial component (See Supplementary Table 4). Therefore, the risk of rape crime highly depends on the location of the districts and their corresponding neighbouring districts.
+
+## **Dowry Deaths**
+
+No apparent variation between the crude and smoothed dowry SMRs was observed. High-risk districts persisted after being spatially smoothed, which indicates their high-risk profile in dowry deaths (Figure 6). 
+```{r map of Dowry SMRs of BYM model,fig.cap="Figure 6. Comparison of Maps of Dowry SMRs",fig.align='center',fig.dim=c(10,2.7)}
+#maps of Total RR of Dowry
+
+RRdowry<-data.frame(RR=dowryBYM.model$summary$all.chains[paste0("RR[", 1:N, "]"), "Median"],ID_area=merged_set[,4])
+
+RRdowry$RRcat<-cut(RRdowry$RR,
+                  breaks = c(min(RRdowry$RR),.5,1,1.5,2,max(RRdowry$RR)),
+                  include.lowest = T)
+mapRRdowry<-left_join(merged_set,RRdowry,by=c("ID_area"="ID_area.ID_area"))
+
+ggplot() + geom_sf(data = mapRRdowry,col=NA) + aes(fill = RRcat) +
+  theme_bw() + scale_fill_viridis_d(direction = 1) + 
+  ggtitle("Map of smoothed SMR of Dowry Deaths",subtitle = "BYM Model")+
+  guides(fill=guide_legend(title="SMR"),size=8) + 
+  theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank(),
+                  plot.title = element_text(hjust = 0.5,size=10,face="bold"),
+                  plot.subtitle = element_text(hjust = 0.5)
+                  )-> dowrySMRBYM
+
+dowrySMR|dowrySMRBYM
+```
+Figure 7 clearly illustrates that the excessive risks in the Western districts excluding some Northernmost and Southernmost regions were introduced by the spatial structure, with corresponding posterior probabilities over 80%.
+```{r Spatial Relative Risk of Dowry,fig.cap="Figure 7. Spatial RR and Posterior Probability of Dowry",fig.align='center',fig.dim=c(10,3)}
+# maps of residual RR
+
+resRR_PP_dowry <- data.frame(resRR=dowryBYM.model$summary$all.chains[paste0("residRR[", 1:N, "]"), "Median"], 
+                       PP=dowryBYM.model$summary$all.chains[paste0("PP[", 1:N, "]"), "Mean"],
+                      ID_area=merged_set[,4])
+
+resRR_PP_dowry$resRRcat <- cut(resRR_PP_dowry$resRR, breaks=c(min(resRR_PP_dowry$resRR), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6,1.8,
+                  max(resRR_PP_dowry$resRR)),include.lowest = T)
+
+resRR_PP_dowry$PPcat <- cut(resRR_PP_dowry$PP, c(0, 0.2, 0.8, 1.00), include.lowest = TRUE)
+
+map_RR_PP_dowry<-left_join(merged_set,resRR_PP_dowry,by=c("ID_area"="ID_area.ID_area"))
+
+ggplot() + geom_sf(data = map_RR_PP_dowry,col=NA) + aes(fill = resRRcat) +
+  theme_bw() + scale_fill_viridis_d(direction = 1) + 
+  guides(fill=guide_legend(title="RR")) + 
+  ggtitle("Posterior Median of Residual RR",subtitle = "BYM Model")+
+  theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank(),
+                  plot.title = element_text(hjust = 0.5,size=10,face = "bold"),
+                  plot.subtitle = element_text(hjust = 0.5)
+                  )-> p3
+#maps of PP
+ggplot() + geom_sf(data = map_RR_PP_dowry,col=NA) + aes(fill = PPcat) +
+  theme_bw() +
+  scale_fill_viridis(
+    option = "plasma",
+    name = "Posterior Probability",
+    discrete = T,
+    direction = 1,
+    guide = guide_legend(
+      title.position = 'top',
+      reverse = T
+    )) +ggtitle("Posterior probability of Residual RR") +  theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank(),
+                  plot.title = element_text(hjust = 0.5,size=10,face = "bold")
+                  ) -> p4
+
+p3|p4
+
+```
+Similarly, the total variance of dowry deaths was also dominated by the spatially structured random effect (See Supplementary Table 5). Therefore, the risk of dowry deaths was highly correlated with the specific district and its surrounding areas.
+
+# **D.Discussion and conclusion**
+This analysis evaluated how the incidence of dowry and rape changed between 2001-2014 in Uttar Pradesh, India. The BYM model performed best as determined by WAIC in comparison to a separable spatio-temporal model and a spatio-temporal model with type I interaction. Increases in average SMR of rape and dowry across the study period may be linked to better reporting due to structural changes in the legal system such as the Protection of Women from Domestic Violence Act 2005, as well as an improved educational system, which can lead to a reduction in stigma and encourage women and other community members to report rape and dowry-related deaths [@vicente2020bayesian; @vogelman1991overcoming; @jordan2011here; @world2013global; @world2010preventing]. To elucidate temporal trends of rape and dowry and impact of socioeconomic factors, a longer time period of data is required [@vicente2020bayesian]. Importantly, dowry death and rape are still underreported issues [@vicente2018small; @nationalcrimerecordsbureau2019; @world2013global; @jordan2011here], such as due to the way certain crimes are defined in the legal system, where murder with rape is recorded as murder in the data [@nationalcrimerecordsbureau2019] and stigma [@world2013global].  High risk areas for dowry death and rape in particular regions may be linked to socioeconomic factors such as education and income [@world2010preventing; @world2013global] however, this data is lacking and should be sought out in the future. Demographic factors such as age are required for more detailed stratified analysis of the data [@world2010preventing; @vicente2020bayesian]. 
+
+An extension of the models is to model rape and dowry death jointly in a shared component model, as these may share common associations with socioeconomic variables not considered in this study. In such models the SMR would be separated into the crime-specific components for dowry death and rape, but also a shared component, through common risk factors for both crimes [@vicente2020bayesian; @held2005towards]. Further, this analysis only tested a spatiotemporal type I interaction however, other types of spatiotemporal interactions (type II, III and IV) may explain the trends of this dataset better. The computational demands of the current analysis were high however, such analysis is important to conduct in the future [@vicente2020bayesian; @vicente2018small]. A last improvement to the models presented is that this analysis only considered the WAIC for model selection however, the deviance information criterion and logarithmic score would enable a more comprehensive view of the best performing model [@vicente2018small].
+
+This analysis identified high and low-risk areas for dowry death and rape in Uttar Pradesh, India. Using a BYM model, particular risk areas where identified in the period of 2001-2014. It found that the risk for dowry death and rape was particularly associated with the spatial dimension, which hints at spatially localised socioeconomic factors that affect the risk in these regions. Further analysis should evaluate the data at a larger temporal scale and seek to extend the current models in the spatial and temporal dimension through the inclusion of joint crime mapping and extension to other space-time interactions. Rape and dowry death remain major issues in Uttar Pradesh and our analysis offers a insight into their spatial and temporal patterns, which may be used to direct educational programs and policies at certain regions of Uttar Pradesh to reduce rape and dowry death in the future. 
+
+
+## **References** 
+<div id="refs"></div>
+
+## **Appendix**
+Name of Districts in Uttar Pradesh
+```{r eval=TRUE,echo=FALSE}
+
+district=data.frame(UP$ID_area,UP$dist)
+colnames(district)<-c("ID_area","District")
+kable(district, booktabs = T, caption = "Supplementary Table 1. Name of Districts in Uttar Pradesh") %>%
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "center")
+```
+
+Supplementary Figure 1. Maps of Crude SMRs of Rape and Dowry over year 2001-2014
+```{r SMRs over years,eval=TRUE,echo=FALSE, fig.align ='center', fig.dim = c(10,8)}
+#maps of rape by years
+
+listplot <- list()
+
+for(i in 2001:2014){
+
+  data %>% filter(year == i) %>% 
+  left_join(UP, ., by = c("ID_area" = "ID_area")) %>% 
+  dplyr::select(ID_area, smr_rape) %>% 
+  rename(!!paste0("RapeSMRs", i) := smr_rape) -> listplot[[c(i-2000)]]
+  
+}
+
+
+do.call(cbind, lapply(listplot, function(X){
+  X <- as.data.frame(X)
+  X$geometry <- NULL
+  return(X[,2])
+  }
+ )
+) %>% as.data.frame() %>% 
+  cbind(listplot[[1]]$ID_area,.) -> tmp
+                    
+colnames(tmp) <- c("ID_area", paste0("RapeSMRs", 2001:2014))
+
+
+apply(tmp[,-1], 2, function(X){
+  Y <- X
+  Y[X == 0] <- "Q0"
+  Y[X != 0] <- as.character(
+  cut(X[X!=0], breaks = quantile(X[X!=0], 
+      probs = seq(from = 0, to = 1, length.out = 6)), 
+      labels = paste0('Q', 1:5), 
+      include.lowest = TRUE)
+  )
+  Y <- as.factor(Y)
+  return(Y)
+}
+) -> tmp[,-1]
+
+SMRrapemaps <- left_join(UP, tmp, by = c("ID_area" = "ID_area"))
+
+listgg <- list()
+
+for(i in 2001:2014){
+  
+  ggplot() + geom_sf(data = SMRrapemaps, 
+                     aes_string(fill = paste0("RapeSMRs", i)), col = NA) + scale_fill_viridis_d(name ="") + 
+  theme_bw() + ggtitle(paste0("RapeSMRs", i)) + 
+  theme(text = element_text(size = 10),plot.title = element_text(hjust = 0.5))-> 
+  listgg[[c(i-2000)]] 
+  
+}
+
+
+(listgg[[1]]|listgg[[2]]|listgg[[3]]|listgg[[4]]|listgg[[5]])/
+(listgg[[6]]|listgg[[7]]|listgg[[8]]|listgg[[9]]|listgg[[10]])/
+(listgg[[11]]|listgg[[12]]|listgg[[13]]|listgg[[14]])
+
+#maps of dowry by years
+
+listplot <- list()
+
+for(i in 2001:2014){
+
+  data %>% filter(year == i) %>% 
+  left_join(UP, ., by = c("ID_area" = "ID_area")) %>% 
+  dplyr::select(ID_area, smr_dowry) %>% 
+  rename(!!paste0("DowrySMRs", i) := smr_dowry) -> listplot[[c(i-2000)]]
+  
+}
+
+
+do.call(cbind, lapply(listplot, function(X){
+  X <- as.data.frame(X)
+  X$geometry <- NULL
+  return(X[,2])
+  }
+ )
+) %>% as.data.frame() %>% 
+  cbind(listplot[[1]]$ID_area,.) -> tmp
+                    
+colnames(tmp) <- c("ID_area", paste0("DowrySMRs", 2001:2014))
+
+
+apply(tmp[,-1], 2, function(X){
+  Y <- X
+  Y[X == 0] <- "Q0"
+  Y[X != 0] <- as.character(
+  cut(X[X!=0], breaks = quantile(X[X!=0], 
+      probs = seq(from = 0, to = 1, length.out = 6)), 
+      labels = paste0('Q', 1:5), 
+      include.lowest = TRUE)
+  )
+  Y <- as.factor(Y)
+  return(Y)
+}
+) -> tmp[,-1]
+
+SMRdowrymaps <- left_join(UP, tmp, by = c("ID_area" = "ID_area"))
+
+listgg <- list()
+
+for(i in 2001:2014){
+  
+  ggplot() + geom_sf(data = SMRdowrymaps, 
+                     aes_string(fill = paste0("DowrySMRs", i)), col = NA) + scale_fill_viridis_d(name ="")+  theme_bw() + ggtitle(paste0("DowrySMRs", i)) + 
+  theme(text = element_text(size = 10),plot.title = element_text(hjust = 0.5))-> 
+  listgg[[c(i-2000)]] 
+  
+}
+
+
+(listgg[[1]]|listgg[[2]]|listgg[[3]]|listgg[[4]]|listgg[[5]])/
+(listgg[[6]]|listgg[[7]]|listgg[[8]]|listgg[[9]]|listgg[[10]])/
+(listgg[[11]]|listgg[[12]]|listgg[[13]]|listgg[[14]])
+
+```
+Supplementary Figure 2. Temporal Pattern of Rape and Dowry SMRs
+```{r temporal trend of rape and dowry,fig.align='center',fig.dim=c(8,2)}
+agg_data_temp=data %>% group_by(year) %>% 
+               summarise(smr_rape=median(smr_rape),
+                         smr_dowry=median(smr_dowry))
+rapeSMRtemp=ggplot(data = agg_data_temp) + 
+  geom_line(aes(year, smr_rape), col = "purple") + 
+  geom_point(aes(year,smr_rape), col = "purple", size = 1.5) +  
+  theme_bw() + ggtitle("Temporal Trend of Average Rape SMRs")+
+  theme(axis.title.y = element_blank(),axis.title.x = element_text(size =5 ),text = element_text(size=8), plot.title = element_text(hjust = 0.5,size=10))+scale_x_continuous(n.breaks = 12)
+
+
+dowrySMRtemp=ggplot(data = agg_data_temp) + 
+  geom_line(aes(year, smr_dowry), col = "purple") + 
+  geom_point(aes(year,smr_dowry), col = "purple", size = 1.5) +  
+  theme_bw() + ggtitle("Temporal Trend of Average Dowry Deaths SMRs")+
+  theme(axis.title.y = element_blank(),axis.title.x = element_text(size =5 ),text = element_text(size=8), plot.title = element_text(hjust = 0.5,size=10))+scale_x_continuous(n.breaks = 12)
+
+rapeSMRtemp|dowrySMRtemp
+
+```
+Supplementary Figure 3. Spaghetti Plot of Temporal Trend of Rape and Dowry SMRs by districts
+```{r Spaghetti Plot of Temporal Trend of Rape and Dowry SMRs by districts, eval=TRUE,echo=FALSE, fig.align ='center', fig.dim = c(10,2)}
+#spaghetti plots
+rapespag=ggplot() + geom_line(data = data, aes(x = year, y = smr_rape, group = ID_area, col = ID_area)) + xlab("Year")+ylab("Rape SMRs")+ggtitle("SMRs of Rape Crime over period 2001-2014 ")+scale_color_viridis_c() + theme_bw()+ theme(plot.title = element_text(hjust = 0.5,size = 10,face = "bold"))+scale_x_continuous(n.breaks = 12)
+
+
+#spaghetti plot
+dowspag=ggplot() + geom_line(data = data, aes(x = year, y = smr_dowry, group = ID_area, col = ID_area)) +
+  scale_color_viridis_c() + theme_bw()+ xlab("Year")+ylab("Dowry SMRs")+ggtitle("SMRs of Dowry over period 2001-2014 ")+ theme(plot.title = element_text(hjust = 0.5,size=10,face = "bold"))+scale_x_continuous(n.breaks = 12)
+
+
+rapespag|dowspag
+```
+### BYM Model of Rape
+```{r eval=TRUE, echo=TRUE}
+rapeBYM<-nimbleCode(
+  {
+    for(i in 1:N){
+      #likelihood
+      O[i]~dpois(mu[i])
+      log(mu[i])<-log(E[i])+alpha+theta[i]+phi[i]
+      
+      #prior
+      theta[i]~dnorm(0,tau.theta)
+      RR[i]<-exp(alpha+theta[i]+phi[i])
+      residRR[i]<-exp(theta[i]+phi[i])
+      PP[i]<-step(residRR[i]-1)
+      
+    }
+  #intrinsic CAR prior on spatial random effect
+    phi[1:N]~dcar_normal(adj[1:L],weights[1:L],num[1:N],tau.phi,zero_mean = 1)
+    
+  #priors
+  alpha~dflat()
+  
+  tau.theta~dgamma(1,0.001)
+  sigma2.theta<-1/tau.theta
+  
+  tau.phi~dgamma(0.5,0.005)
+  sigma2.phi<-1/tau.phi
+  
+  sigma2.phi.marginal <- sd(phi[1:N])*sd(phi[1:N])
+  frac.spatial <-  sigma2.phi.marginal/( sigma2.phi.marginal + sigma2.theta)   
+  overallRR<-exp(alpha)
+  }
+)
+
+#creating adjacency matrix
+UP_nb<-poly2nb(UP)
+summary(UP_nb)
+
+UP_nimb<-nb2WB(nb=UP_nb)
+names(UP_nimb)
+
+
+#list of data
+N<-dim(UP)[1]
+
+rapeData=list(
+  O= merged_set$rape
+)
+
+rapeConst<-list(
+                N=N,
+                L=length(UP_nimb$weights),
+                E=merged_set$e_rape,
+                adj=UP_nimb$adj,
+                num=UP_nimb$num,
+                weights=UP_nimb$weights
+)
+
+#set initial values (2 chains)
+inits<- list(
+  list(alpha=0.01,
+       tau.theta=10,
+       tau.phi=1,
+       theta=rep(0.02,times=N),
+       phi=c(rep(0.02,times=N))),
+  list(alpha=0.5,
+       tau.theta=1,
+       tau.phi=0.1,
+       theta=rep(0.05,times=N),
+       phi=c(rep(-0.05,times=N)))
+)
+
+#parameters to monitored
+params<-c("overallRR","RR","PP","residRR","sigma2.theta","sigma2.phi","theta","phi","mu","alpha","frac.spatial", "sigma2.phi.marginal")
+
+#MCMC setting
+ni<-100000
+nt<-10
+nb<-50000
+nc<-2
+
+#MCMC simulations
+t_0<-Sys.time()
+rapeBYM.model<-nimbleMCMC(code = rapeBYM,
+                          data=rapeData,
+                          constants = rapeConst,
+                          inits = inits,
+                          monitors=params,
+                          niter = ni,
+                          nburnin = nb,
+                          thin=nt,
+                          nchains = nc,
+                          setSeed = 123,
+                          progressBar = F,
+                          samplesAsCodaMCMC = T,
+                          summary = T,
+                          WAIC = T
+                          )
+
+t_1<-Sys.time()
+t_1-t_0
+```
+### BYM Model of Rape
+```{r eval=TRUE, echo=TRUE}
+rapeBYM<-nimbleCode(
+  {
+    for(i in 1:N){
+      #likelihood
+      O[i]~dpois(mu[i])
+      log(mu[i])<-log(E[i])+alpha+theta[i]+phi[i]
+      
+      #prior
+      theta[i]~dnorm(0,tau.theta)
+      RR[i]<-exp(alpha+theta[i]+phi[i])
+      residRR[i]<-exp(theta[i]+phi[i])
+      PP[i]<-step(residRR[i]-1)
+      
+    }
+  #intrinsic CAR prior on spatial random effect
+    phi[1:N]~dcar_normal(adj[1:L],weights[1:L],num[1:N],tau.phi,zero_mean = 1)
+    
+  #priors
+  alpha~dflat()
+  
+  tau.theta~dgamma(1,0.001)
+  sigma2.theta<-1/tau.theta
+  
+  tau.phi~dgamma(0.5,0.005)
+  sigma2.phi<-1/tau.phi
+  
+  sigma2.phi.marginal <- sd(phi[1:N])*sd(phi[1:N])
+  frac.spatial <-  sigma2.phi.marginal/( sigma2.phi.marginal + sigma2.theta)   
+  overallRR<-exp(alpha)
+  }
+)
+
+#creating adjacency matrix
+UP_nb<-poly2nb(UP)
+summary(UP_nb)
+
+UP_nimb<-nb2WB(nb=UP_nb)
+names(UP_nimb)
+
+
+#list of data
+N<-dim(UP)[1]
+
+rapeData=list(
+  O= merged_set$rape
+)
+
+rapeConst<-list(
+                N=N,
+                L=length(UP_nimb$weights),
+                E=merged_set$e_rape,
+                adj=UP_nimb$adj,
+                num=UP_nimb$num,
+                weights=UP_nimb$weights
+)
+
+#set initial values (2 chains)
+inits<- list(
+  list(alpha=0.01,
+       tau.theta=10,
+       tau.phi=1,
+       theta=rep(0.02,times=N),
+       phi=c(rep(0.02,times=N))),
+  list(alpha=0.5,
+       tau.theta=1,
+       tau.phi=0.1,
+       theta=rep(0.05,times=N),
+       phi=c(rep(-0.05,times=N)))
+)
+
+#parameters to monitored
+params<-c("overallRR","RR","PP","residRR","sigma2.theta","sigma2.phi","theta","phi","mu","alpha","frac.spatial", "sigma2.phi.marginal")
+
+#MCMC setting
+ni<-100000
+nt<-10
+nb<-50000
+nc<-2
+
+#MCMC simulations
+t_0<-Sys.time()
+rapeBYM.model<-nimbleMCMC(code = rapeBYM,
+                          data=rapeData,
+                          constants = rapeConst,
+                          inits = inits,
+                          monitors=params,
+                          niter = ni,
+                          nburnin = nb,
+                          thin=nt,
+                          nchains = nc,
+                          setSeed = 123,
+                          progressBar = F,
+                          samplesAsCodaMCMC = T,
+                          summary = T,
+                          WAIC = T
+                          )
+
+t_1<-Sys.time()
+t_1-t_0
+```
+
+
+Supplementary Figure 4. Convergence diagnostic of BYM model of Rape
+```{r eval=TRUE, echo=FALSE}
+#visualise the convergence diagnostics
+ggs_rape<-ggs(rapeBYM.model$samples)
+ggs_rape %>% filter (Parameter %in% c("overallRR","sigma2.theta","sigma2.phi")) %>% ggs_traceplot()+theme_bw()
+
+set.seed(123)
+ran.s <- sample(1:N, size = 3)
+ggs_rape %>% filter(Parameter %in% c(paste0("theta[", ran.s, "]"))) %>% 
+  ggs_traceplot() + theme_bw()
+
+ggs_rape %>% filter(Parameter %in% c(paste0("phi[", ran.s, "]"))) %>% 
+  ggs_traceplot() + theme_bw()
+
+GR.rape<-gelman.diag(rapeBYM.model$samples,multivariate = F)
+
+all(GR.rape$psrf[,"Point est."]<1.1)
+which(GR.rape$psrf[,"Point est."] > 1.1) 
+```
+
+
+### BYM Model of Dowry Deaths
+```{r eval=TRUE, echo=TRUE}
+dowryBYM<-nimbleCode(
+  {
+    for(i in 1:N){
+      #likelihood
+      O[i]~dpois(mu[i])
+      log(mu[i])<-log(E[i])+alpha+theta[i]+phi[i]
+      
+      #prior
+      theta[i]~dnorm(0,tau.theta)
+      RR[i]<-exp(alpha+theta[i]+phi[i])
+      residRR[i]<-exp(theta[i]+phi[i])
+      PP[i]<-step(residRR[i]-1)
+      
+    }
+  #intrinsic CAR prior on spatial random effect
+    phi[1:N]~dcar_normal(adj[1:L],weights[1:L],num[1:N],tau.phi,zero_mean = 1)
+    
+  #priors
+  alpha~dflat()
+  
+  tau.theta~dgamma(1,0.001)
+  sigma2.theta<-1/tau.theta
+  
+  tau.phi~dgamma(0.5,0.005)
+  sigma2.phi<-1/tau.phi
+  
+  sigma2.phi.marginal <- sd(phi[1:N])*sd(phi[1:N])
+  frac.spatial <-  sigma2.phi.marginal/( sigma2.phi.marginal + sigma2.theta)   
+  overallRR<-exp(alpha)
+  }
+)
+
+#creating adjacency matrix
+UP_nb<-poly2nb(UP)
+summary(UP_nb)
+
+UP_nimb<-nb2WB(nb=UP_nb)
+names(UP_nimb)
+
+
+#list of data
+N<-dim(UP)[1]
+
+dowryData=list(
+  O= merged_set$dowry
+)
+
+dowryConst<-list(
+                N=N,
+                L=length(UP_nimb$weights),
+                E=merged_set$e_dowry,
+                adj=UP_nimb$adj,
+                num=UP_nimb$num,
+                weights=UP_nimb$weights
+)
+
+#set initial values (2 chains)
+inits<- list(
+  list(alpha=0.01,
+       tau.theta=10,
+       tau.phi=1,
+       theta=rep(0.02,times=N),
+       phi=c(rep(0.02,times=N))),
+  list(alpha=0.5,
+       tau.theta=1,
+       tau.phi=0.1,
+       theta=rep(0.05,times=N),
+       phi=c(rep(-0.05,times=N)))
+)
+
+#parameters to monitored
+params<-c("overallRR","RR","PP","residRR","sigma2.theta","sigma2.phi","theta","phi","mu","alpha","frac.spatial", "sigma2.phi.marginal")
+
+#MCMC setting
+ni<-50000
+nt<-10
+nb<-10000
+nc<-2
+
+#MCMC simulations
+t_0<-Sys.time()
+dowryBYM.model<-nimbleMCMC(code = dowryBYM,
+                          data=dowryData,
+                          constants = dowryConst,
+                          inits = inits,
+                          monitors=params,
+                          niter = ni,
+                          nburnin = nb,
+                          thin=nt,
+                          nchains = nc,
+                          setSeed = 123,
+                          progressBar = F,
+                          samplesAsCodaMCMC = T,
+                          summary = T,
+                          WAIC = T
+                          )
+
+t_1<-Sys.time()
+t_1-t_0
+```
+Supplementary Figure 5. Convergence Diagnostics of BYM model of dowry deaths
+```{r eval=TRUE, echo=FALSE}
+#visualise the convergence diagnostics
+ggs_dowry<-ggs(dowryBYM.model$samples)
+ggs_dowry %>% filter (Parameter %in% c("overallRR","sigma2.theta","sigma2.phi")) %>% ggs_traceplot()+theme_bw()
+
+set.seed(123)
+ran.s <- sample(1:N, size = 3)
+ggs_dowry %>% filter(Parameter %in% c(paste0("theta[", ran.s, "]"))) %>% 
+  ggs_traceplot() + theme_bw()
+
+ggs_dowry %>% filter(Parameter %in% c(paste0("phi[", ran.s, "]"))) %>% 
+  ggs_traceplot() + theme_bw()
+
+GR.dowry<-gelman.diag(dowryBYM.model$samples,multivariate = F)
+
+all(GR.dowry$psrf[,"Point est."]<1.1)
+which(GR.dowry$psrf[,"Point est."] > 1.1) 
+```
+### Separable Spatio-temporal Model of Rape
+```{r eval=TRUE, echo=TRUE}
+st_rapeBYM<-nimbleCode(
+  {
+    for (i in 1:N)
+    {
+      for (t in 1:Temporal)
+      {
+        O[i,t]~dpois(mu[i,t])
+        log(mu[i,t])<-log(E[i,t])+alpha+theta[i]+phi[i]+gamma[t]+xi[t]
+        gamma[t]~dnorm(0,tau.gamma)
+        residRRtm[t]<-exp(gamma[t]+xi[t])
+        RR[i,t]<-exp(alpha+theta[i]+phi[i]+gamma[t]+xi[t])
+      }
+      theta[i]~dnorm(0,tau.theta)
+      residRR[i]<-exp(theta[i]+phi[i])
+      PP[i]<-step(residRR[i]-1)
+    }
+    #intrinsic CAR prior on temporal random effects
+    xi[1:Temporal]~dcar_normal(adj.tm[1:K],weights.tm[1:K],num.tm[1:Temporal],tau.xi,zero_mean =1)
+    
+    #intrinsic CAR prior on spatial random effects
+    phi[1:N]~dcar_normal(adj[1:L],weights[1:L],num[1:N],tau.phi,zero_mean = 1)
+    
+    #priors
+    alpha~dflat()
+    overallRR<-exp(alpha)
+    
+    #temporal field
+    tau.gamma~dgamma(1,0.001)
+    sigma2.gamma<-1/tau.gamma
+    
+    tau.xi~dgamma(0.5,0.005)
+    sigma2.xi<-1/tau.xi
+    
+    #spatial field
+    tau.theta~dgamma(1,0.001)
+    sigma2.theta<-1/tau.theta
+    
+    tau.phi~dgamma(0.5,0.005)
+    sigma2.phi<-1/tau.phi
+  }
+)
+
+#The matrix for temporal
+Temporal<-length(unique(data$year))
+W<-matrix(0,nrow = Temporal,ncol=Temporal)
+
+for(i in 1:(Temporal-1)) W[i,i+1]<-1
+for(i in 1:(Temporal-1)) W[i+1,i]<-1
+
+Wnb_temporal<-mat2listw(W)
+Wnb_temporal<-nb2WB(nb=Wnb_temporal$neighbours)
+
+N<-dim(UP)[1]
+
+UP_nb<-poly2nb(UP,queen = T)
+summary(UP_nb)
+
+UP_nimb<-nb2WB(nb=UP_nb)
+names(UP_nimb)
+
+#observed data
+rape <- spread(data[,c("year", "ID_area", "rape")], year, rape)
+rape <- as.matrix(rape[,-1])
+
+#expected data
+e_rape<- spread(data[,c("year", "ID_area", "e_rape")], year, e_rape)
+e_rape <- as.matrix(e_rape[,-1])
+
+strapeData=list(
+  O=rape
+)
+
+strapeConst<-list(
+  N=N,
+  #space
+  L=length(UP_nimb$weights),
+  E=e_rape,
+  adj=UP_nimb$adj,
+  num=UP_nimb$num,
+  weights=UP_nimb$weights,
+  #time
+  Temporal=Temporal,
+  K=length(Wnb_temporal$weights),
+  adj.tm=Wnb_temporal$adj,
+  num.tm=Wnb_temporal$num,
+  weights.tm=Wnb_temporal$weights
+  )
+inits <- list(
+  list(alpha = 1,
+       tau.theta = 10,
+       tau.phi = 1,
+       tau.xi = 8, 
+       tau.gamma = 5,
+       theta = rep(0.02, times = N), 
+       phi = c(rep(0.2, times = N)), 
+       gamma = rep(0.02, times = Temporal),
+       xi = c(rep(0.2, times = Temporal))
+       ),
+  list(alpha = 0.5,
+       tau.theta = 1,
+       tau.phi = 0.1,
+       tau.xi = 0.8, 
+       tau.gamma = 0.5,
+       theta = rep(0.05, times = N),
+       phi = c(rep(-0.05, times = N)), 
+       gamma = rep(-0.02, times = Temporal),
+       xi = c(rep(-0.2, times = Temporal))
+       )
+)
+params <- c("overallRR", "RR","residRR", "PP", "sigma2.phi",
+                  "sigma2.theta", "phi", "theta", "xi", "gamma",
+                   "sigma2.gamma", "sigma2.xi", "mu", "residRRtm","alpha")
+
+ni <- 200000  # nb iterations 
+nt <- 10      # thinning interval
+nb <- 100000  # nb iterations as burn-in 
+nc <- 2      # nb chains
+
+t_0 <- Sys.time()
+st_rapeBYM.model <- nimbleMCMC(code = st_rapeBYM,
+                      data = strapeData,
+                      constants = strapeConst, 
+                      inits = inits,
+                      monitors = params,
+                      niter = ni,
+                      nburnin = nb,
+                      thin = nt, 
+                      nchains = nc, 
+                      setSeed = 123, 
+                      progressBar = TRUE, 
+                      samplesAsCodaMCMC = TRUE, 
+                      summary = TRUE, 
+                      WAIC = TRUE
+                      )
+t_1 <- Sys.time()
+t_1 - t_0
+```
+Supplementary Figure 6. Convergence Diagnostic of Separable Spatio-temporal Model of Rape
+```{r eval=TRUE, echo=FALSE}
+ggs_strape<-ggs(st_rapeBYM.model$samples)
+ggs_strape %>% filter(Parameter %in% c("overallRR", "sigma2.theta", "sigma2.phi", 
+                                           "sigma2.gamma", "sigma2.xi")) %>% 
+  ggs_traceplot() + theme_bw()
+
+set.seed(123)
+ran.s <- sample(1:N, size = 3)
+ggs_strape%>% filter(Parameter %in% c(paste0("theta[", ran.s, "]"))) %>% 
+  ggs_traceplot() + theme_bw()
+
+ggs_strape%>% filter(Parameter %in% c(paste0("phi[", ran.s, "]"))) %>% 
+  ggs_traceplot() + theme_bw()
+
+ran.t <- sample(1:Temporal, size = 3)
+ggs_strape%>% filter(Parameter %in% c(paste0("gamma[", ran.t, "]"))) %>% 
+  ggs_traceplot() + theme_bw()
+
+ggs_strape%>% filter(Parameter %in% c(paste0("xi[", ran.t, "]"))) %>% 
+  ggs_traceplot() + theme_bw()
+
+GR.strape<-gelman.diag(st_rapeBYM.model$samples,multivariate = F)
+
+all(GR.strape$psrf[,"Point est."]<1.1)
+which(GR.strape$psrf[,"Point est."] > 1.1)
+```
+Supplementary Figure 7. Summary Statistics and Results. Spatial RR and Posterior Probability of Rape.
+```{r Spatial RR and Posterior Probability of Rape, eval=TRUE,echo=FALSE, fig.align ='center', fig.dim = c(10,4)}
+#posterior summary statistic
+
+st_rapeBYM.model$summary$all.chains[c(paste0("theta[", ran.s, "]"), 
+                                paste0("phi[", ran.s, "]"), paste0("gamma[",ran.t,"]"),paste0("xi[", ran.t, "]")),
+                              c("Median", "95%CI_low", "95%CI_low")]
+
+tab= round(st_rapeBYM.model$summary$all.chains[c("sigma2.theta", "sigma2.phi","sigma2.gamma","sigma2.xi","overallRR"), c("Median", "95%CI_low", "95%CI_upp")], 3)
+
+rownames(tab) <- c("$\\sigma^2_{\\theta}$", "$\\sigma^2_{\\phi}$","$\\sigma^2_{\\gamma}$","$\\sigma^2_{\\xi}$" , 
+                    "Overall RR")
+
+knitr::kable(tab, caption = "Supplementary Table 4. Median and 95%CrI for the 4 variances, the spatial fraction and the overall RR.") %>%  
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "center")
+
+#map the residual RR
+resRR_PP_strape <- data.frame(resRR=st_rapeBYM.model$summary$all.chains[paste0("residRR[", 1:N, "]"), "Median"], 
+                       PP=st_rapeBYM.model$summary$all.chains[paste0("PP[", 1:N, "]"), "Mean"],
+                      ID_area=merged_set[,4])
+
+# breakpoints
+resRR_PP_strape$resRRcat <- cut(resRR_PP_strape$resRR, breaks=c(min(resRR_PP_strape$resRR), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6,1.8, 
+                  max(resRR_PP_strape$resRR)),include.lowest = T)
+
+resRR_PP_strape$PPcat <- cut(resRR_PP_strape$PP, c(0, 0.2, 0.8, 1.00), include.lowest = TRUE)
+
+map_RR_STrape <- left_join(UP, resRR_PP_strape, by = c("ID_area" = "ID_area.ID_area"))
+
+ggplot() + geom_sf(data = map_RR_STrape ,col=NA) + aes(fill = resRRcat) +
+  theme_bw() + scale_fill_viridis_d(direction = 1) + 
+  guides(fill=guide_legend(title="RR")) + 
+  ggtitle("Posterior Median of Residual RR of Rape",subtitle = "(separable spatio-temporal)")+
+  theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank(),
+                  plot.title = element_text(hjust = 0.5,size = 10,face="bold")
+                  )-> p5
+#maps of PP
+ggplot() + geom_sf(data = map_RR_STrape ,col=NA) + aes(fill = PPcat) +
+  theme_bw() +
+  scale_fill_viridis(
+    option = "plasma",
+    name = "Posterior Probability",
+    discrete = T,
+    direction = 1,
+    guide = guide_legend(
+      title.position = 'top',
+      reverse = T
+    )) +ggtitle("Posterior probability of Residual RR") +  theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank(),
+         plot.title = element_text(hjust = 0.5,size=10,face = "bold")
+                  ) -> p6
+  (p5|p6)
+
+```
+Supplementary Figure 8. Maps of rape SMRs over 2001-2014
+```{r map of rape SMRs over 2001-2014, eval=TRUE,echo=FALSE, fig.align ='center', fig.dim = c(10,8)}
+#map of SMRs over 2001-2014
+RR2001 <- data.frame(RR01=st_rapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 1]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2002 <- data.frame(RR02=st_rapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 2]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2003 <- data.frame(RR03=st_rapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 3]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2004 <- data.frame(RR04=st_rapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 4]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2005 <- data.frame(RR05=st_rapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 5]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2006 <- data.frame(RR06=st_rapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 6]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2007 <- data.frame(RR07=st_rapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 7]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2008 <- data.frame(RR08=st_rapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 8]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2009 <- data.frame(RR09=st_rapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 9]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2010 <- data.frame(RR10=st_rapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 10]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2011 <- data.frame(RR11=st_rapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 11]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2012 <- data.frame(RR12=st_rapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 12]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2013 <- data.frame(RR13=st_rapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 13]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2014 <- data.frame(RR14=st_rapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 14]"), "Median"], 
+                    ID_area=merged_set[,4])
+
+#breakpoints
+RR2001$RR01cat <- cut(RR2001$RR01, breaks=c(min(RR2001$RR01), 
+                  .5,1,1.5,2, 
+                  max(RR2001$RR01)),include.lowest = T)
+RR2002$RR02cat <- cut(RR2002$RR02, breaks=c(min(RR2002$RR02), 
+                  .5,1,1.5,2, 
+                  max(RR2002$RR02)),include.lowest = T)
+RR2003$RR03cat <- cut(RR2003$RR03, breaks=c(min(RR2003$RR03), 
+                 .5,1,1.5,2, 
+                  max(RR2003$RR03)),include.lowest = T)
+RR2004$RR04cat <- cut(RR2004$RR04, breaks=c(min(RR2004$RR04), 
+                  .5,1,1.5,2, 
+                  max(RR2004$RR04)),include.lowest = T)
+RR2005$RR05cat <- cut(RR2005$RR05, breaks=c(min(RR2005$RR05), 
+                  .5,1,1.5,2, 
+                  max(RR2005$RR05)),include.lowest = T)
+RR2006$RR06cat <- cut(RR2006$RR06, breaks=c(min(RR2006$RR06), 
+                 .5,1,1.5,2, 
+                  max(RR2006$RR06)),include.lowest = T)
+RR2007$RR07cat <- cut(RR2007$RR07, breaks=c(min(RR2007$RR07), 
+                  .5,1,1.5,2, 
+                  max(RR2007$RR07)),include.lowest = T)
+RR2008$RR08cat <- cut(RR2008$RR08, breaks=c(min(RR2008$RR08), 
+                  .5,1,1.5,2, 
+                  max(RR2008$RR08)),include.lowest = T)
+RR2009$RR09cat <- cut(RR2009$RR09, breaks=c(min(RR2009$RR09), 
+                  .5,1,1.5,2, 
+                  max(RR2009$RR09)),include.lowest = T)
+RR2010$RR10cat <- cut(RR2010$RR10, breaks=c(min(RR2010$RR10), 
+                  .5,1,1.5,2, 
+                  max(RR2010$RR10)),include.lowest = T)
+RR2011$RR11cat <- cut(RR2011$RR11, breaks=c(min(RR2011$RR11), 
+                  .5,1,1.5,2, 
+                  max(RR2011$RR11)),include.lowest = T)
+RR2012$RR12cat <- cut(RR2012$RR12, breaks=c(min(RR2012$RR12), 
+                  .5,1,1.5,2, 
+                  max(RR2012$RR12)),include.lowest = T)
+RR2013$RR13cat <- cut(RR2013$RR13, breaks=c(min(RR2013$RR13), 
+                  .5,1,1.5,2, 
+                  max(RR2013$RR13)),include.lowest = T)
+RR2014$RR14cat <- cut(RR2014$RR14, breaks=c(min(RR2014$RR14), 
+                  .5,1,1.5,2, 
+                  max(RR2014$RR14)),include.lowest = T)
+
+map_RR_STrape<-left_join(UP,RR2001,by=c("ID_area"="ID_area.ID_area"))%>% left_join(.,RR2002)%>%
+left_join(.,RR2003)%>%
+left_join(.,RR2004)%>%
+left_join(.,RR2005)%>%
+left_join(.,RR2006)%>%
+left_join(.,RR2007)%>%
+left_join(.,RR2008)%>%
+left_join(.,RR2009)%>%
+left_join(.,RR2010)%>%
+left_join(.,RR2011)%>%
+left_join(.,RR2012)%>%
+left_join(.,RR2013)%>%
+left_join(.,RR2014)
+
+mapRR2001 <- ggplot() + geom_sf(data = map_RR_STrape, col = NA) + aes(fill = RR01cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2001") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2002 <- ggplot() + geom_sf(data = map_RR_STrape, col = NA) + aes(fill = RR02cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2002") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2003 <- ggplot() + geom_sf(data = map_RR_STrape, col = NA) + aes(fill = RR03cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2003") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2004 <- ggplot() + geom_sf(data = map_RR_STrape, col = NA) + aes(fill = RR04cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2004") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2005 <- ggplot() + geom_sf(data = map_RR_STrape, col = NA) + aes(fill = RR05cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2005") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2006 <- ggplot() + geom_sf(data = map_RR_STrape, col = NA) + aes(fill = RR06cat) +
+            theme_bw()+ scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2006") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2007 <- ggplot() + geom_sf(data = map_RR_STrape, col = NA) + aes(fill = RR07cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2007") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2008 <- ggplot() + geom_sf(data = map_RR_STrape, col = NA) + aes(fill = RR08cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2008") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2009 <- ggplot() + geom_sf(data = map_RR_STrape, col = NA) + aes(fill = RR09cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2009") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2010 <- ggplot() + geom_sf(data = map_RR_STrape, col = NA) + aes(fill = RR10cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2010") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2011 <- ggplot() + geom_sf(data = map_RR_STrape, col = NA) + aes(fill = RR11cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2011") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2012 <- ggplot() + geom_sf(data = map_RR_STrape, col = NA) + aes(fill = RR12cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2012") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2013 <- ggplot() + geom_sf(data = map_RR_STrape, col = NA) + aes(fill = RR13cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2013") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2014 <- ggplot() + geom_sf(data = map_RR_STrape, col = NA) + aes(fill = RR14cat) +
+            theme_bw()+ scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2014") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+
+(mapRR2001|mapRR2002|mapRR2003|mapRR2004|mapRR2005)/
+(mapRR2006|mapRR2007|mapRR2008|mapRR2009|mapRR2010)/
+(mapRR2011|mapRR2012|mapRR2013|mapRR2014)
+
+#temporal trend residual
+rape.trend <- 
+  round(
+  data.frame(median = 
+    st_rapeBYM.model$summary$all.chains[paste0("residRRtm[",1:14, "]"),"Median"], 
+    LL = st_rapeBYM.model$summary$all.chains[paste0("residRRtm[",1:14, "]"),"95%CI_low"], 
+    UL =st_rapeBYM.model$summary$all.chains[paste0("residRRtm[",1:14, "]"),"95%CI_upp"]), 
+  digits = 2)
+
+row.names(rape.trend) <- 2001:2014
+
+knitr::kable(rape.trend, caption = "Temporal random effects.") %>%  kable_styling(bootstrap_options = "striped", full_width = F, position = "center")
+
+rape.trend$year <- 2001:2014
+
+restemp=ggplot(data = rape.trend) + 
+  geom_ribbon(aes(x = year, ymin = LL, ymax = UL), fill = viridis(1), alpha = .1) + 
+  geom_line(aes(year, median), col = viridis(1)) + 
+  geom_point(aes(year,median), col = viridis(1), size = 1.5) +  
+  theme_bw() +ggtitle("Temporal Trend Residual")+
+  theme(axis.title.y = element_blank(), 
+        text = element_text(size=8),plot.title = element_text(hjust = 0.5,size=10,face = "bold"))+scale_x_continuous(n.breaks = 12)
+```
+Supplementary Figure 9. Temporal Trend of average rape SMRs and residuals of rape
+```{r eval=TRUE, echo=TRUE, fig.align = 'center', fig.dim =c(8,2)}
+rapeSMRtemp|restemp
+```
+### Separable Spatio-temporal Model of Dowry
+```{r eval=TRUE, echo=TRUE}
+st_dowryBYM<-nimbleCode(
+  {
+    for (i in 1:N)
+    {
+      for (t in 1:Temporal)
+      {
+        O[i,t]~dpois(mu[i,t])
+        log(mu[i,t])<-log(E[i,t])+alpha+theta[i]+phi[i]+gamma[t]+xi[t]
+        gamma[t]~dnorm(0,tau.gamma)
+        residRRtm[t]<-exp(gamma[t]+xi[t])
+        RR[i,t]<-exp(alpha+theta[i]+phi[i]+gamma[t]+xi[t])
+      }
+      theta[i]~dnorm(0,tau.theta)
+      residRR[i]<-exp(theta[i]+phi[i])
+      PP[i]<-step(residRR[i]-1)
+    }
+    #intrinsic CAR prior on temporal random effects
+    xi[1:Temporal]~dcar_normal(adj.tm[1:K],weights.tm[1:K],num.tm[1:Temporal],tau.xi,zero_mean =1)
+    
+    #intrinsic CAR prior on spatial random effects
+    phi[1:N]~dcar_normal(adj[1:L],weights[1:L],num[1:N],tau.phi,zero_mean = 1)
+    
+    #priors
+    alpha~dflat()
+    overallRR<-exp(alpha)
+    
+    #temporal field
+    tau.gamma~dgamma(1,0.001)
+    sigma2.gamma<-1/tau.gamma
+    
+    tau.xi~dgamma(0.5,0.005)
+    sigma2.xi<-1/tau.xi
+    
+    #spatial field
+    tau.theta~dgamma(1,0.001)
+    sigma2.theta<-1/tau.theta
+    
+    tau.phi~dgamma(0.5,0.005)
+    sigma2.phi<-1/tau.phi
+  }
+)
+
+#The matrix for temporal
+Temporal<-length(unique(data$year))
+W<-matrix(0,nrow = Temporal,ncol=Temporal)
+
+for(i in 1:(Temporal-1)) W[i,i+1]<-1
+for(i in 1:(Temporal-1)) W[i+1,i]<-1
+
+Wnb_temporal<-mat2listw(W)
+Wnb_temporal<-nb2WB(nb=Wnb_temporal$neighbours)
+
+N<-dim(UP)[1]
+
+UP_nb<-poly2nb(UP,queen = T)
+summary(UP_nb)
+
+UP_nimb<-nb2WB(nb=UP_nb)
+names(UP_nimb)
+
+#observed data
+dowry <- spread(data[,c("year", "ID_area", "dowry")], year, dowry)
+dowry <- as.matrix(dowry[,-1])
+
+#expected data
+e_dowry<- spread(data[,c("year", "ID_area", "e_dowry")], year, e_dowry)
+e_dowry <- as.matrix(e_dowry[,-1])
+
+stdowryData=list(
+  O=dowry
+)
+
+stdowryConst<-list(
+  N=N,
+  #space
+  L=length(UP_nimb$weights),
+  E=e_rape,
+  adj=UP_nimb$adj,
+  num=UP_nimb$num,
+  weights=UP_nimb$weights,
+  #time
+  Temporal=Temporal,
+  K=length(Wnb_temporal$weights),
+  adj.tm=Wnb_temporal$adj,
+  num.tm=Wnb_temporal$num,
+  weights.tm=Wnb_temporal$weights
+  )
+inits <- list(
+  list(alpha = 1,
+       tau.theta = 10,
+       tau.phi = 1,
+       tau.xi = 8, 
+       tau.gamma = 5,
+       theta = rep(0.02, times = N), 
+       phi = c(rep(0.2, times = N)), 
+       gamma = rep(0.02, times = Temporal),
+       xi = c(rep(0.2, times = Temporal))
+       ),
+  list(alpha = 0.5,
+       tau.theta = 1,
+       tau.phi = 0.1,
+       tau.xi = 0.8, 
+       tau.gamma = 0.5,
+       theta = rep(0.05, times = N),
+       phi = c(rep(-0.05, times = N)), 
+       gamma = rep(-0.02, times = Temporal),
+       xi = c(rep(-0.2, times = Temporal))
+       )
+)
+params <- c("overallRR", "RR","residRR", "PP", "sigma2.phi",
+                  "sigma2.theta", "phi", "theta", "xi", "gamma",
+                   "sigma2.gamma", "sigma2.xi", "mu", "residRRtm","alpha")
+
+ni <- 100000  # nb iterations 
+nt <- 10     # thinning interval
+nb <- 50000  # nb iterations as burn-in 
+nc <- 2      # nb chains
+
+t_0 <- Sys.time()
+st_dowryBYM.model <- nimbleMCMC(code = st_dowryBYM,
+                      data = stdowryData,
+                      constants = stdowryConst, 
+                      inits = inits,
+                      monitors = params,
+                      niter = ni,
+                      nburnin = nb,
+                      thin = nt, 
+                      nchains = nc, 
+                      setSeed = 123, 
+                      progressBar = TRUE, 
+                      samplesAsCodaMCMC = TRUE, 
+                      summary = TRUE, 
+                      WAIC = TRUE
+                      )
+t_1 <- Sys.time()
+t_1 - t_0
+```
+Supplementary Figure 10. Convergence Diagnostic of Separable Spatio-temporal Model of Dowry
+```{r eval=TRUE, echo=FALSE}
+#visualise the main diagnostic
+ggs_stdowry<-ggs(st_dowryBYM.model$samples)
+ggs_stdowry %>% filter(Parameter %in% c("overallRR", "sigma2.theta", "sigma2.phi", 
+                                           "sigma2.gamma", "sigma2.xi")) %>% 
+  ggs_traceplot() + theme_bw()
+
+set.seed(123)
+ran.s <- sample(1:N, size = 3)
+ggs_stdowry%>% filter(Parameter %in% c(paste0("theta[", ran.s, "]"))) %>% 
+  ggs_traceplot() + theme_bw()
+
+ggs_stdowry%>% filter(Parameter %in% c(paste0("phi[", ran.s, "]"))) %>% 
+  ggs_traceplot() + theme_bw()
+
+ran.t <- sample(1:Temporal, size = 3)
+ggs_stdowry%>% filter(Parameter %in% c(paste0("gamma[", ran.t, "]"))) %>% 
+  ggs_traceplot() + theme_bw()
+
+ggs_stdowry%>% filter(Parameter %in% c(paste0("xi[", ran.t, "]"))) %>% 
+  ggs_traceplot() + theme_bw()
+
+GR.stdowry<-gelman.diag(st_dowryBYM.model$samples,multivariate = F)
+
+all(GR.stdowry$psrf[,"Point est."]<1.1)
+which(GR.stdowry$psrf[,"Point est."] > 1.1) 
+```
+Summary statistics 
+```{r eval=TRUE,echo=FALSE}
+#posterior summary statistic
+
+st_dowryBYM.model$summary$all.chains[c(paste0("theta[", ran.s, "]"), 
+                                paste0("phi[", ran.s, "]"), paste0("gamma[",ran.t,"]"),paste0("xi[", ran.t, "]")),
+                              c("Median", "95%CI_low", "95%CI_low")]
+
+tab= round(st_dowryBYM.model$summary$all.chains[c("sigma2.theta", "sigma2.phi","sigma2.gamma","sigma2.xi","overallRR"), c("Median", "95%CI_low", "95%CI_upp")], 3)
+
+rownames(tab) <- c("$\\sigma^2_{\\theta}$", "$\\sigma^2_{\\phi}$","$\\sigma^2_{\\gamma}$","$\\sigma^2_{\\xi}$" , 
+                    "Overall RR")
+
+knitr::kable(tab, caption = "Supplementary Table 5. Median and 95%CrI for the 4 variances, the spatial fraction and the overall RR.") %>%  
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "center")
+
+
+#map the residual RRs
+resRR_PP_stdowry <- data.frame(resRR=st_dowryBYM.model$summary$all.chains[paste0("residRR[", 1:N, "]"), "Median"], 
+                       PP=st_dowryBYM.model$summary$all.chains[paste0("PP[", 1:N, "]"), "Mean"],
+                      ID_area=merged_set[,4])
+
+# breakpoints
+resRR_PP_stdowry$resRRcat <- cut(resRR_PP_stdowry$resRR, breaks=c(min(resRR_PP_stdowry$resRR), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(resRR_PP_stdowry$resRR)),include.lowest = T)
+
+resRR_PP_stdowry$PPcat <- cut(resRR_PP_stdowry$PP, c(0, 0.2, 0.8, 1.00), include.lowest = TRUE)
+
+map_RR_STdowry <- left_join(UP, resRR_PP_stdowry, by = c("ID_area" = "ID_area.ID_area"))
+
+ggplot() + geom_sf(data = map_RR_STdowry ,col=NA) + aes(fill = resRRcat) +
+  theme_bw() + scale_fill_viridis_d(direction = 1) + 
+  guides(fill=guide_legend(title="RR")) + 
+  ggtitle("Posterior Median of Residual RR of Dowry",subtitle = "(separable spatio-temporal)")+
+  theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank(),
+                  plot.title = element_text(hjust = 0.5,size = 10,face = "bold")
+                  )-> p7
+#maps of PP
+ggplot() + geom_sf(data = map_RR_STdowry ,col=NA) + aes(fill = PPcat) +
+  theme_bw() +
+  scale_fill_viridis(
+    option = "plasma",
+    name = "Posterior Probability",
+    discrete = T,
+    direction = 1,
+    guide = guide_legend(
+      title.position = 'top',
+      reverse = T
+    )) +ggtitle("Posterior probability of Residual RR") +  theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank(),
+         plot.title = element_text(hjust = 0.5,size = 10,face = "bold")
+                  ) -> p8
+
+```
+Supplementary Figure 11. Posterior Median of Residual RR and Posterior Probability of Residual RR of dowry
+```{r echo = FALSE, eval = TRUE, fig.align = 'center', fig.dim =c(10,4)}
+  (p7|p8)
+```
+Supplementary Figure 12. Maps of dowry SMR across years
+```{r eval=TRUE,echo=FALSE,  fig.align = 'center', fig.dim =c(10,8)}
+#map of SMRs over 2001-2014
+RR2001 <- data.frame(RR01=st_dowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 1]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2002 <- data.frame(RR02=st_dowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 2]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2003 <- data.frame(RR03=st_dowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 3]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2004 <- data.frame(RR04=st_dowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 4]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2005 <- data.frame(RR05=st_dowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 5]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2006 <- data.frame(RR06=st_dowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 6]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2007 <- data.frame(RR07=st_dowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 7]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2008 <- data.frame(RR08=st_dowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 8]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2009 <- data.frame(RR09=st_dowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 9]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2010 <- data.frame(RR10=st_dowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 10]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2011 <- data.frame(RR11=st_dowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 11]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2012 <- data.frame(RR12=st_dowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 12]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2013 <- data.frame(RR13=st_dowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 13]"), "Median"], 
+                    ID_area=merged_set[,4])
+RR2014 <- data.frame(RR14=st_dowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 14]"), "Median"], 
+                    ID_area=merged_set[,4])
+
+#breakpoints
+RR2001$RR01cat <- cut(RR2001$RR01, breaks=c(min(RR2001$RR01), 
+                  .5,1,1.5,2, 
+                  max(RR2001$RR01)),include.lowest = T)
+RR2002$RR02cat <- cut(RR2002$RR02, breaks=c(min(RR2002$RR02), 
+                  .5,1,1.5,2, 
+                  max(RR2002$RR02)),include.lowest = T)
+RR2003$RR03cat <- cut(RR2003$RR03, breaks=c(min(RR2003$RR03), 
+                 .5,1,1.5,2, 
+                  max(RR2003$RR03)),include.lowest = T)
+RR2004$RR04cat <- cut(RR2004$RR04, breaks=c(min(RR2004$RR04), 
+                  .5,1,1.5,2, 
+                  max(RR2004$RR04)),include.lowest = T)
+RR2005$RR05cat <- cut(RR2005$RR05, breaks=c(min(RR2005$RR05), 
+                  .5,1,1.5,2, 
+                  max(RR2005$RR05)),include.lowest = T)
+RR2006$RR06cat <- cut(RR2006$RR06, breaks=c(min(RR2006$RR06), 
+                 .5,1,1.5,2, 
+                  max(RR2006$RR06)),include.lowest = T)
+RR2007$RR07cat <- cut(RR2007$RR07, breaks=c(min(RR2007$RR07), 
+                  .5,1,1.5,2, 
+                  max(RR2007$RR07)),include.lowest = T)
+RR2008$RR08cat <- cut(RR2008$RR08, breaks=c(min(RR2008$RR08), 
+                  .5,1,1.5,2, 
+                  max(RR2008$RR08)),include.lowest = T)
+RR2009$RR09cat <- cut(RR2009$RR09, breaks=c(min(RR2009$RR09), 
+                  .5,1,1.5,2, 
+                  max(RR2009$RR09)),include.lowest = T)
+RR2010$RR10cat <- cut(RR2010$RR10, breaks=c(min(RR2010$RR10), 
+                  .5,1,1.5,2, 
+                  max(RR2010$RR10)),include.lowest = T)
+RR2011$RR11cat <- cut(RR2011$RR11, breaks=c(min(RR2011$RR11), 
+                  .5,1,1.5,2, 
+                  max(RR2011$RR11)),include.lowest = T)
+RR2012$RR12cat <- cut(RR2012$RR12, breaks=c(min(RR2012$RR12), 
+                  .5,1,1.5,2, 
+                  max(RR2012$RR12)),include.lowest = T)
+RR2013$RR13cat <- cut(RR2013$RR13, breaks=c(min(RR2013$RR13), 
+                  .5,1,1.5,2, 
+                  max(RR2013$RR13)),include.lowest = T)
+RR2014$RR14cat <- cut(RR2014$RR14, breaks=c(min(RR2014$RR14), 
+                  .5,1,1.5,2, 
+                  max(RR2014$RR14)),include.lowest = T)
+
+map_RR_STdowry<-left_join(UP,RR2001,by=c("ID_area"="ID_area.ID_area"))%>% left_join(.,RR2002)%>%
+left_join(.,RR2003)%>%
+left_join(.,RR2004)%>%
+left_join(.,RR2005)%>%
+left_join(.,RR2006)%>%
+left_join(.,RR2007)%>%
+left_join(.,RR2008)%>%
+left_join(.,RR2009)%>%
+left_join(.,RR2010)%>%
+left_join(.,RR2011)%>%
+left_join(.,RR2012)%>%
+left_join(.,RR2013)%>%
+left_join(.,RR2014)
+
+mapRR2001 <- ggplot() + geom_sf(data = map_RR_STdowry, col = NA) + aes(fill = RR01cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry  SMRs 2001") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2002 <- ggplot() + geom_sf(data = map_RR_STdowry, col = NA) + aes(fill = RR02cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry  SMRs 2002") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2003 <- ggplot() + geom_sf(data = map_RR_STdowry, col = NA) + aes(fill = RR03cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry  SMRs 2003") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2004 <- ggplot() + geom_sf(data = map_RR_STdowry, col = NA) + aes(fill = RR04cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry  SMRs 2004") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2005 <- ggplot() + geom_sf(data = map_RR_STdowry, col = NA) + aes(fill = RR05cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry  SMRs 2005") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2006 <- ggplot() + geom_sf(data = map_RR_STdowry, col = NA) + aes(fill = RR06cat) +
+            theme_bw()+ scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry  SMRs 2006") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2007 <- ggplot() + geom_sf(data = map_RR_STdowry, col = NA) + aes(fill = RR07cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry  SMRs 2007") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2008 <- ggplot() + geom_sf(data = map_RR_STdowry, col = NA) + aes(fill = RR08cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry  SMRs 2008") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2009 <- ggplot() + geom_sf(data = map_RR_STdowry, col = NA) + aes(fill = RR09cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry  SMRs 2009") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2010 <- ggplot() + geom_sf(data = map_RR_STdowry, col = NA) + aes(fill = RR10cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry  SMRs 2010") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2011 <- ggplot() + geom_sf(data = map_RR_STdowry, col = NA) + aes(fill = RR11cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry SMRs 2011") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2012 <- ggplot() + geom_sf(data = map_RR_STdowry, col = NA) + aes(fill = RR12cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry  SMRs 2012") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2013 <- ggplot() + geom_sf(data = map_RR_STdowry, col = NA) + aes(fill = RR13cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry  SMRs 2013") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+mapRR2014 <- ggplot() + geom_sf(data = map_RR_STdowry, col = NA) + aes(fill = RR14cat) +
+            theme_bw()+ scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry SMRs 2014") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank())
+
+(mapRR2001|mapRR2002|mapRR2003|mapRR2004|mapRR2005)/
+(mapRR2006|mapRR2007|mapRR2008|mapRR2009|mapRR2010)/
+(mapRR2011|mapRR2012|mapRR2013|mapRR2014)
+
+#temporal trend residual
+dowry.trend <- 
+  round(
+  data.frame(median = 
+    st_dowryBYM.model$summary$all.chains[paste0("residRRtm[",1:14, "]"),"Median"], 
+    LL = st_dowryBYM.model$summary$all.chains[paste0("residRRtm[",1:14, "]"),"95%CI_low"], 
+    UL =st_dowryBYM.model$summary$all.chains[paste0("residRRtm[",1:14, "]"),"95%CI_upp"]), 
+  digits = 2)
+
+row.names(dowry.trend) <- 2001:2014
+
+knitr::kable(dowry.trend, caption = "Supplementary Table 6. Temporal random effects.") %>%  kable_styling(bootstrap_options = "striped", full_width = F, position = "center")
+
+dowry.trend$year <- 2001:2014
+
+destemp=ggplot(data =dowry.trend) + 
+  geom_ribbon(aes(x = year, ymin = LL, ymax = UL), fill = viridis(1), alpha = .1) + 
+  geom_line(aes(year, median), col = viridis(1)) + 
+  geom_point(aes(year,median), col = viridis(1), size = 1.5) +  
+  theme_bw() +ggtitle("Temporal Trend Residual")+
+  theme(axis.title.y = element_blank(), 
+        text = element_text(size=8),plot.title = element_text(hjust = 0.5,size = 10,face = "bold"))+scale_x_continuous(n.breaks = 12)
+
+```
+
+Supplementary Figure 13. Temporal trend of dowry SMRs and temporal trend of residuals
+```{r eval=TRUE,echo=FALSE, fig.align = 'center', fig.dim =c(8,2)}
+dowrySMRtemp|destemp
+```
+
+### Spatio-temporal Type I Interaction Model of Rape
+```{r eval=TRUE, echo=TRUE}
+st_typeIrapeBYM<-nimbleCode(
+  {
+    for (i in 1:N)
+    {
+      for (t in 1:Temporal)
+      {
+        O[i,t]~dpois(mu[i,t])
+        log(mu[i,t])<-log(E[i,t])+alpha+theta[i]+phi[i]+gamma[t]+xi[t]+zeta[i,t]
+        
+        zeta[i,t]~dnorm(0,tau.zeta)
+        gamma[t]~dnorm(0,tau.gamma)
+        
+        residRRtm[t]<-exp(gamma[t]+xi[t])
+        residRRtypeI[i,t]<-exp(zeta[i,t])
+        
+        RR[i,t]<-exp(alpha+theta[i]+phi[i]+gamma[t]+xi[t]+zeta[i,t])
+      }
+      theta[i]~dnorm(0,tau.theta)
+      residRR[i]<-exp(theta[i]+phi[i])
+      PP[i]<-step(residRR[i]-1)
+    }
+    #intrinsic CAR prior on temporal random effects
+    xi[1:Temporal]~dcar_normal(adj.tm[1:K],weights.tm[1:K],num.tm[1:Temporal],tau.xi,zero_mean =1)
+    
+    #intrinsic CAR prior on spatial random effects
+    phi[1:N]~dcar_normal(adj[1:L],weights[1:L],num[1:N],tau.phi,zero_mean = 1)
+    
+    #priors
+    alpha~dflat()
+    overallRR<-exp(alpha)
+    
+    #temporal field
+    tau.gamma~dgamma(1,0.001)
+    sigma2.gamma<-1/tau.gamma
+    
+    tau.xi~dgamma(0.5,0.005)
+    sigma2.xi<-1/tau.xi
+    
+    #spatial field
+    tau.theta~dgamma(1,0.001)
+    sigma2.theta<-1/tau.theta
+    
+    tau.phi~dgamma(0.5,0.005)
+    sigma2.phi<-1/tau.phi
+    
+    #spatiotemporal
+    tau.zeta~dgamma(1,0.001)
+    sigma2.zeta<-1/tau.zeta
+  }
+)
+
+#The matrix for temporal
+Temporal<-length(unique(data$year))
+W<-matrix(0,nrow = Temporal,ncol=Temporal)
+
+for(i in 1:(Temporal-1)) W[i,i+1]<-1
+for(i in 1:(Temporal-1)) W[i+1,i]<-1
+
+Wnb_temporal<-mat2listw(W)
+Wnb_temporal<-nb2WB(nb=Wnb_temporal$neighbours)
+
+N<-dim(UP)[1]
+
+UP_nb<-poly2nb(UP,queen = T)
+summary(UP_nb)
+
+UP_nimb<-nb2WB(nb=UP_nb)
+names(UP_nimb)
+
+stIrapeData=list(
+  O=rape
+)
+
+stIrapeConst<-list(
+  N=N,
+  #space
+  L=length(UP_nimb$weights),
+  E=e_rape,
+  adj=UP_nimb$adj,
+  num=UP_nimb$num,
+  weights=UP_nimb$weights,
+  #time
+  Temporal=Temporal,
+  K=length(Wnb_temporal$weights),
+  adj.tm=Wnb_temporal$adj,
+  num.tm=Wnb_temporal$num,
+  weights.tm=Wnb_temporal$weights
+  )
+inits <- list(
+  list(alpha = 1,
+       tau.theta = 10,
+       tau.phi = 1,
+       tau.xi = 8, 
+       tau.gamma = 5,
+       tau.zeta=5,
+       theta = rep(0.02, times = N), 
+       phi = c(rep(0.2, times = N)), 
+       gamma = rep(0.02, times = Temporal),
+       xi = c(rep(0.2, times = Temporal)),
+       zeta=matrix(0.2,nrow = N,ncol = Temporal)
+       ),
+  list(alpha = 0.5,
+       tau.theta = 1,
+       tau.phi = 0.1,
+       tau.xi = 0.8, 
+       tau.gamma = 0.5,
+       tau.zeta=1,
+       theta = rep(0.05, times = N),
+       phi = c(rep(-0.05, times = N)), 
+       gamma = rep(-0.02, times = Temporal),
+       xi = c(rep(-0.2, times = Temporal)),
+       zeta=matrix(-0.2,nrow = N,ncol = Temporal)
+       )
+)
+params <- c("overallRR", "RR","residRR", "PP", "sigma2.phi",
+                  "sigma2.theta", "phi", "theta", "xi", "gamma",
+                   "sigma2.gamma", "sigma2.xi", "mu",  "zeta","sigma2.zeta","residRRtypeI", "residRRtm","alpha")
+
+ni <- 200000  # nb iterations 
+nt <- 10     # thinning interval
+nb <- 100000  # nb iterations as burn-in 
+nc <- 2      # nb chains
+
+t_0 <- Sys.time()
+st_typeIrapeBYM.model <- nimbleMCMC(code = st_typeIrapeBYM,
+                      data = stIrapeData,
+                      constants = stIrapeConst, 
+                      inits = inits,
+                      monitors = params,
+                      niter = ni,
+                      nburnin = nb,
+                      thin = nt, 
+                      nchains = nc, 
+                      setSeed = 123, 
+                      progressBar = TRUE, 
+                      samplesAsCodaMCMC = TRUE, 
+                      summary = TRUE, 
+                      WAIC = TRUE
+                      )
+t_1 <- Sys.time()
+t_1 - t_0
+```
+Supplementary Figure 14. Convergence Diagnostic of Spatio-temporal Type I Interaction Model of Rape
+```{r eval=TRUE, echo=FALSE}
+ggs_stIrape<-ggs(st_typeIrapeBYM.model$samples)
+ggs_stIrape %>% filter(Parameter %in% c("overallRR", "sigma2.theta", "sigma2.phi", 
+                                           "sigma2.gamma", "sigma2.xi","sigma2.zeta")) %>% 
+  ggs_traceplot() + theme_bw()
+
+set.seed(123)
+ran.s <- sample(1:N, size = 3)
+ggs_stIrape%>% filter(Parameter %in% c(paste0("theta[", ran.s, "]"))) %>% 
+  ggs_traceplot() + theme_bw()
+
+ggs_stIrape%>% filter(Parameter %in% c(paste0("phi[", ran.s, "]"))) %>% 
+  ggs_traceplot() + theme_bw()
+
+ran.t <- sample(1:Temporal, size = 3)
+ggs_stIrape%>% filter(Parameter %in% c(paste0("gamma[", ran.t, "]"))) %>% 
+  ggs_traceplot() + theme_bw()
+
+ggs_stIrape%>% filter(Parameter %in% c(paste0("xi[", ran.t, "]"))) %>% 
+  ggs_traceplot() + theme_bw()
+
+ggs_stIrape %>% filter(Parameter %in% c(paste0("zeta[", ran.s, ", ", ran.t, "]"))) %>% 
+  ggs_traceplot() + theme_bw()
+
+
+
+GR.stIrape<-gelman.diag(st_typeIrapeBYM.model$samples,multivariate = F)
+
+all(GR.stIrape$psrf[startsWith(rownames(GR.stIrape$psrf), c("gamma")),"Point est."] < 1.1)
+all(GR.stIrape$psrf[startsWith(rownames(GR.stIrape$psrf), c("theta")),"Point est."] <1.1)
+all(GR.stIrape$psrf[startsWith(rownames(GR.stIrape$psrf), c("phi")),"Point est."] < 1.1)
+all(GR.stIrape$psrf[startsWith(rownames(GR.stIrape$psrf), c("xi")),"Point est."] <1.1)
+all(GR.stIrape$psrf[startsWith(rownames(GR.stIrape$psrf), c("zeta")),"Point est."]<1.1)
+
+```
+Summary statistics 
+```{r eval=TRUE,echo=FALSE}
+
+#posterior summary statistic
+
+st_typeIrapeBYM.model$summary$all.chains[c(paste0("theta[", ran.s, "]"), 
+                                paste0("phi[", ran.s, "]"), paste0("gamma[",ran.t,"]"),paste0("xi[", ran.t, "]"),paste0("zeta[", ran.s, ", ", ran.t, "]")),
+                              c("Median", "95%CI_low", "95%CI_low")]
+
+tab= round(st_typeIrapeBYM.model$summary$all.chains[c("sigma2.theta", "sigma2.phi","sigma2.gamma","sigma2.xi","sigma2.zeta","overallRR"), c("Median", "95%CI_low", "95%CI_upp")], 3)
+
+rownames(tab) <- c("$\\sigma^2_{\\theta}$", "$\\sigma^2_{\\phi}$","$\\sigma^2_{\\gamma}$","$\\sigma^2_{\\xi}$" ,"$\\sigma^2_{\\nu}$", 
+                    "Overall RR")
+
+knitr::kable(tab, caption = "Supplementary Table 7. Median and 95%CrI for the 5 variances, the spatial fraction and the overall RR.") %>%  
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "center")
+
+#map of Smoothed total SMR
+RRmap<-UP
+RRmap$RR2001<-st_typeIrapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 1]"), "Median"]
+RRmap$RR2002<-st_typeIrapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 2]"), "Median"]
+RRmap$RR2003<-st_typeIrapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 3]"), "Median"]
+RRmap$RR2004<-st_typeIrapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 4]"), "Median"]
+RRmap$RR2005<-st_typeIrapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 5]"), "Median"]
+RRmap$RR2006<-st_typeIrapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 6]"), "Median"]
+RRmap$RR2007<-st_typeIrapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 7]"), "Median"]
+RRmap$RR2008<-st_typeIrapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 8]"), "Median"]
+RRmap$RR2009<-st_typeIrapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 9]"), "Median"]
+RRmap$RR2010<-st_typeIrapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 10]"), "Median"]
+RRmap$RR2011<-st_typeIrapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 11]"), "Median"]
+RRmap$RR2012<-st_typeIrapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 12]"), "Median"]
+RRmap$RR2013<-st_typeIrapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 13]"), "Median"]
+RRmap$RR2014<-st_typeIrapeBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 14]"), "Median"]
+
+RRmap$RR01cat <- cut(RRmap$RR2001,      breaks=c(min(RRmap$RR2001), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2001)),include.lowest = T)
+RRmap$RR02cat <- cut(RRmap$RR2002,      breaks=c(min(RRmap$RR2002), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2002)),include.lowest = T)
+RRmap$RR03cat <- cut(RRmap$RR2003,      breaks=c(min(RRmap$RR2003), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2003)),include.lowest = T)
+RRmap$RR04cat <- cut(RRmap$RR2004,      breaks=c(min(RRmap$RR2004), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2004)),include.lowest = T)
+RRmap$RR05cat <- cut(RRmap$RR2005,      breaks=c(min(RRmap$RR2005), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2005)),include.lowest = T)
+RRmap$RR06cat <- cut(RRmap$RR2006,      breaks=c(min(RRmap$RR2006), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2006)),include.lowest = T)
+RRmap$RR07cat <- cut(RRmap$RR2007,      breaks=c(min(RRmap$RR2007), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2007)),include.lowest = T)
+RRmap$RR08cat <- cut(RRmap$RR2008,      breaks=c(min(RRmap$RR2008), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2008)),include.lowest = T)
+RRmap$RR09cat <- cut(RRmap$RR2009,      breaks=c(min(RRmap$RR2009), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2009)),include.lowest = T)
+RRmap$RR10cat <- cut(RRmap$RR2010,      breaks=c(min(RRmap$RR2010), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2010)),include.lowest = T)
+RRmap$RR11cat <- cut(RRmap$RR2011,      breaks=c(min(RRmap$RR2011), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2011)),include.lowest = T)
+RRmap$RR12cat <- cut(RRmap$RR2012,      breaks=c(min(RRmap$RR2012), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2012)),include.lowest = T)
+
+RRmap$RR13cat <- cut(RRmap$RR2013,      breaks=c(min(RRmap$RR2013), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2013)),include.lowest = T)
+RRmap$RR14cat <- cut(RRmap$RR2014,      breaks=c(min(RRmap$RR2014), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2014)),include.lowest = T)
+mapRR2001 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR01cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2001") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2002 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR02cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2002") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2003 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR03cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2003") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2004 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR04cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2004") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2005 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR05cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2005") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2006 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR06cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2006") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2007 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR07cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2007") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2008 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR08cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2008") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2009 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR09cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2009") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2010 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR10cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2010") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2011 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR11cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2011") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2012 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR12cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2012") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2013 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR13cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2013") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2014 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR14cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1)+ 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of Rape SMRs 2014") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+```
+
+
+Supplementary Figure 15. SMR of rape across years
+```{r eval=TRUE,echo=FALSE, fig.align = 'center', fig.dim =c(10,8)} 
+(mapRR2001|mapRR2002|mapRR2003|mapRR2004|mapRR2005)/
+  (mapRR2006|mapRR2007|mapRR2008|mapRR2009|mapRR2010)/
+  (mapRR2011|mapRR2012|mapRR2013|mapRR2014)
+```
+
+```{r}
+#spaghetti plot of spatiotemporal smoothing
+dat.temp <- data.frame(
+  year = data$year, ID_area=data$ID_area, 
+  STRR = st_typeIrapeBYM.model$summary$all.chains[startsWith(rownames(st_typeIrapeBYM.model$summary$all.chains), "RR"),"Median"]) 
+  
+
+rapespagtI=ggplot() + geom_line(data = dat.temp, aes(x = year, y = STRR, group = ID_area, col = ID_area)) + xlab("Year")+ylab("Rape SMRs")+ggtitle("Smoothed SMRs of Rape Crime over period 2001-2014 ")+
+  scale_color_viridis_c() + theme_bw()+ theme(plot.title = element_text(hjust = 0.5,size=10,face="bold"))+scale_x_continuous(n.breaks = 12)
+```
+
+Supplementary Figure 16. Spaghetti plot of rape SMR across years
+```{r eval=TRUE,echo=FALSE, fig.align = 'center', fig.dim =c(8, 2)}
+rapespag|rapespagtI
+```
+
+Supplementary Figure 17. Temporal trend of SMR of rape and residual trend across years. 
+```{r echo = FALSE, eval= TRUE, fig.align = 'center', fig.dim = c(10,2)}
+#plot temporal residual RR
+dat.trend <- data.frame(
+  year = 2001:2014,
+  median = exp(st_typeIrapeBYM.model$summary$all.chains[paste0("gamma[",1:14, "]"),"Median"] + st_typeIrapeBYM.model$summary$all.chains[paste0("xi[",1:14, "]"),"Median"]), 
+  LL = exp(st_typeIrapeBYM.model$summary$all.chains[paste0("gamma[",1:14, "]"), "95%CI_low"] + st_typeIrapeBYM.model$summary$all.chains[paste0("xi[",1:14, "]"),"95%CI_low"]), 
+  UL = exp(st_typeIrapeBYM.model$summary$all.chains[paste0("gamma[",1:14, "]"), "95%CI_upp"] + st_typeIrapeBYM.model$summary$all.chains[paste0("xi[",1:14, "]"),"95%CI_upp"])
+)
+  
+
+raperesRR=ggplot(data = dat.trend) + 
+  geom_ribbon(aes(x = year, ymin = LL, ymax = UL), fill = viridis(1), alpha = .1) + 
+  geom_line(aes(x = year, y = median), col = viridis(1)) + 
+  geom_point(aes(x = year, y = median), col = viridis(1), size = 1.5) + 
+  ylim(c(0, 2)) + 
+  ylab("Temporal relative risk") +
+  theme_bw() +ggtitle("Temporal Trend Residual")+
+  theme(axis.title.y = element_blank(), 
+        text = element_text(size=8),plot.title = element_text(hjust = 0.5,size=10,face="bold"))+scale_x_continuous(n.breaks = 12)
+
+rapeSMRtemp|restemp|raperesRR
+
+
+#plot spatiotemporal RR
+spattimetypeI<-UP
+spattimetypeI$RR2001 <- st_typeIrapeBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 1]"), "Median"]
+spattimetypeI$RR2002 <- st_typeIrapeBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 2]"), "Median"]
+spattimetypeI$RR2003 <- st_typeIrapeBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 3]"), "Median"]
+spattimetypeI$RR2004 <- st_typeIrapeBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 4]"), "Median"]
+spattimetypeI$RR2005 <- st_typeIrapeBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 5]"), "Median"]
+spattimetypeI$RR2006 <- st_typeIrapeBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 6]"), "Median"]
+spattimetypeI$RR2007 <- st_typeIrapeBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 7]"), "Median"]
+spattimetypeI$RR2008<- st_typeIrapeBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 8]"), "Median"]
+spattimetypeI$RR2009 <- st_typeIrapeBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 9]"), "Median"]
+spattimetypeI$RR2010 <- st_typeIrapeBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 10]"), "Median"]
+spattimetypeI$RR2011 <- st_typeIrapeBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 11]"), "Median"]
+spattimetypeI$RR2012 <- st_typeIrapeBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 12]"), "Median"]
+spattimetypeI$RR2013 <- st_typeIrapeBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 13]"), "Median"]
+spattimetypeI$RR2014 <- st_typeIrapeBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 14]"), "Median"]
+
+spattimetypeI$RR01cat <- cut(spattimetypeI$RR2001,      breaks=c(min(spattimetypeI$RR2001), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2001)),include.lowest = T)
+spattimetypeI$RR02cat <- cut(spattimetypeI$RR2002, breaks=c(min(spattimetypeI$RR2002), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2002)),include.lowest = T)
+spattimetypeI$RR03cat <- cut(spattimetypeI$RR2003, breaks=c(min(spattimetypeI$RR2003), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2003)),include.lowest = T)
+spattimetypeI$RR04cat <- cut(spattimetypeI$RR2004, breaks=c(min(spattimetypeI$RR2004), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2004)),include.lowest = T)
+spattimetypeI$RR05cat <- cut(spattimetypeI$RR2005, breaks=c(min(spattimetypeI$RR2005), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2005)),include.lowest = T)
+spattimetypeI$RR06cat <- cut(spattimetypeI$RR2006, breaks=c(min(spattimetypeI$RR2006), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2006)),include.lowest = T)
+spattimetypeI$RR07cat <- cut(spattimetypeI$RR2007, breaks=c(min(spattimetypeI$RR2007), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2007)),include.lowest = T)
+spattimetypeI$RR08cat <- cut(spattimetypeI$RR2008, breaks=c(min(spattimetypeI$RR2008), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2008)),include.lowest = T)
+spattimetypeI$RR09cat <- cut(spattimetypeI$RR2009, breaks=c(min(spattimetypeI$RR2009), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2009)),include.lowest = T)
+spattimetypeI$RR10cat <- cut(spattimetypeI$RR2010, breaks=c(min(spattimetypeI$RR2010), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2010)),include.lowest = T)
+spattimetypeI$RR11cat <- cut(spattimetypeI$RR2011, breaks=c(min(spattimetypeI$RR2011), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2011)),include.lowest = T)
+spattimetypeI$RR12cat <- cut(spattimetypeI$RR2012, breaks=c(min(spattimetypeI$RR2012), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2012)),include.lowest = T)
+spattimetypeI$RR13cat <- cut(spattimetypeI$RR2013, breaks=c(min(spattimetypeI$RR2013), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2013)),include.lowest = T)
+spattimetypeI$RR14cat <- cut(spattimetypeI$RR2014, breaks=c(min(spattimetypeI$RR2014), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2014)),include.lowest = T)
+
+mapRRTI2001 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR01cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2001") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2002 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR02cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2002") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2003 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR03cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2003") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2004 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR04cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2004") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2005 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR05cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2005") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2006 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR06cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2006") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2007 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR07cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2007") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2008 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR08cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2008") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2009 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR09cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2009") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2010 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR10cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2010") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2011 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR11cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2011") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2012 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR12cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2012") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2013 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR13cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2013") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2014 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR14cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1)+ 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2014") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+
+```
+Supplementary Figure 18. Maps of SMRs across years and regions for rape
+```{r echo = FALSE, eval= TRUE, fig.align = 'center', fig.dim = c(10,8)}
+(mapRRTI2001|mapRRTI2002|mapRRTI2003|mapRRTI2004|mapRRTI2005)/
+  (mapRRTI2006|mapRRTI2007|mapRRTI2008|mapRRTI2009|mapRRTI2010)/
+  (mapRRTI2011|mapRRTI2012|mapRRTI2013|mapRRTI2014)
+
+```
+
+### Spatio-temporal Type I Interaction Model of Dowry
+```{r eval=TRUE, echo=TRUE}
+st_typeIdowryBYM<-nimbleCode(
+  {
+    for (i in 1:N)
+    {
+      for (t in 1:Temporal)
+      {
+        O[i,t]~dpois(mu[i,t])
+        log(mu[i,t])<-log(E[i,t])+alpha+theta[i]+phi[i]+gamma[t]+xi[t]+zeta[i,t]
+        
+        zeta[i,t]~dnorm(0,tau.zeta)
+        gamma[t]~dnorm(0,tau.gamma)
+        
+        residRRtm[t]<-exp(gamma[t]+xi[t])
+        residRRtypeI[i,t]<-exp(zeta[i,t])
+        
+        RR[i,t]<-exp(alpha+theta[i]+phi[i]+gamma[t]+xi[t]+zeta[i,t])
+      }
+      theta[i]~dnorm(0,tau.theta)
+      residRR[i]<-exp(theta[i]+phi[i])
+      PP[i]<-step(residRR[i]-1)
+    }
+    #intrinsic CAR prior on temporal random effects
+    xi[1:Temporal]~dcar_normal(adj.tm[1:K],weights.tm[1:K],num.tm[1:Temporal],tau.xi,zero_mean =1)
+    
+    #intrinsic CAR prior on spatial random effects
+    phi[1:N]~dcar_normal(adj[1:L],weights[1:L],num[1:N],tau.phi,zero_mean = 1)
+    
+    #priors
+    alpha~dflat()
+    overallRR<-exp(alpha)
+    
+    #temporal field
+    tau.gamma~dgamma(1,0.001)
+    sigma2.gamma<-1/tau.gamma
+    
+    tau.xi~dgamma(0.5,0.005)
+    sigma2.xi<-1/tau.xi
+    
+    #spatial field
+    tau.theta~dgamma(1,0.001)
+    sigma2.theta<-1/tau.theta
+    
+    tau.phi~dgamma(0.5,0.005)
+    sigma2.phi<-1/tau.phi
+    
+    #spatiotemporal
+    tau.zeta~dgamma(1,0.001)
+    sigma2.zeta<-1/tau.zeta
+  }
+)
+
+#The matrix for temporal
+Temporal<-length(unique(data$year))
+W<-matrix(0,nrow = Temporal,ncol=Temporal)
+
+for(i in 1:(Temporal-1)) W[i,i+1]<-1
+for(i in 1:(Temporal-1)) W[i+1,i]<-1
+
+Wnb_temporal<-mat2listw(W)
+Wnb_temporal<-nb2WB(nb=Wnb_temporal$neighbours)
+
+N<-dim(UP)[1]
+
+UP_nb<-poly2nb(UP,queen = T)
+summary(UP_nb)
+
+UP_nimb<-nb2WB(nb=UP_nb)
+names(UP_nimb)
+
+stIdowryData=list(
+  O=dowry
+)
+
+stIdowryConst<-list(
+  N=N,
+  #space
+  L=length(UP_nimb$weights),
+  E=e_dowry,
+  adj=UP_nimb$adj,
+  num=UP_nimb$num,
+  weights=UP_nimb$weights,
+  #time
+  Temporal=Temporal,
+  K=length(Wnb_temporal$weights),
+  adj.tm=Wnb_temporal$adj,
+  num.tm=Wnb_temporal$num,
+  weights.tm=Wnb_temporal$weights
+  )
+inits <- list(
+  list(alpha = 1,
+       tau.theta = 10,
+       tau.phi = 1,
+       tau.xi = 8, 
+       tau.gamma = 5,
+       tau.zeta=5,
+       theta = rep(0.02, times = N), 
+       phi = c(rep(0.2, times = N)), 
+       gamma = rep(0.02, times = Temporal),
+       xi = c(rep(0.2, times = Temporal)),
+       zeta=matrix(0.2,nrow = N,ncol = Temporal)
+       ),
+  list(alpha = 0.5,
+       tau.theta = 1,
+       tau.phi = 0.1,
+       tau.xi = 0.8, 
+       tau.gamma = 0.5,
+       tau.zeta=1,
+       theta = rep(0.05, times = N),
+       phi = c(rep(-0.05, times = N)), 
+       gamma = rep(-0.02, times = Temporal),
+       xi = c(rep(-0.2, times = Temporal)),
+       zeta=matrix(-0.2,nrow = N,ncol = Temporal)
+       )
+)
+params <- c("overallRR", "RR","residRR", "PP", "sigma2.phi",
+                  "sigma2.theta", "phi", "theta", "xi", "gamma",
+                   "sigma2.gamma", "sigma2.xi", "mu",  "zeta","sigma2.zeta","residRRtypeI", "residRRtm","alpha")
+
+ni <- 100000  # nb iterations 
+nt <- 10     # thinning interval
+nb <- 50000  # nb iterations as burn-in 
+nc <- 2      # nb chains
+
+t_0 <- Sys.time()
+st_typeIdowryBYM.model <- nimbleMCMC(code = st_typeIdowryBYM,
+                      data = stIdowryData,
+                      constants = stIdowryConst, 
+                      inits = inits,
+                      monitors = params,
+                      niter = ni,
+                      nburnin = nb,
+                      thin = nt, 
+                      nchains = nc, 
+                      setSeed = 123, 
+                      progressBar = TRUE, 
+                      samplesAsCodaMCMC = TRUE, 
+                      summary = TRUE, 
+                      WAIC = TRUE
+                      )
+t_1 <- Sys.time()
+t_1 - t_0
+```
+Supplementary Figure 19. Convergence Diagnostic of Spatio-temporal Type I Interaction Model of Dowry
+```{r eval=TRUE, echo=FALSE}
+#visualise the main diagnostic
+ggs_stIdowry<-ggs(st_typeIdowryBYM.model$samples)
+ggs_stIdowry %>% filter(Parameter %in% c("overallRR", "sigma2.theta", "sigma2.phi", 
+                                           "sigma2.gamma", "sigma2.xi","sigma2.zeta")) %>% 
+  ggs_traceplot() + theme_bw()
+
+set.seed(123)
+ran.s <- sample(1:N, size = 3)
+ggs_stIdowry%>% filter(Parameter %in% c(paste0("theta[", ran.s, "]"))) %>% 
+  ggs_traceplot() + theme_bw()
+
+ggs_stIdowry%>% filter(Parameter %in% c(paste0("phi[", ran.s, "]"))) %>% 
+  ggs_traceplot() + theme_bw()
+
+ran.t <- sample(1:Temporal, size = 3)
+ggs_stIdowry%>% filter(Parameter %in% c(paste0("gamma[", ran.t, "]"))) %>% 
+  ggs_traceplot() + theme_bw()
+
+ggs_stIdowry%>% filter(Parameter %in% c(paste0("xi[", ran.t, "]"))) %>% 
+  ggs_traceplot() + theme_bw()
+
+ggs_stIdowry %>% filter(Parameter %in% c(paste0("zeta[", ran.s, ", ", ran.t, "]"))) %>% 
+  ggs_traceplot() + theme_bw()
+
+
+
+GR.stIdowry<-gelman.diag(st_typeIdowryBYM.model$samples,multivariate = F)
+
+all(GR.stIdowry$psrf[startsWith(rownames(GR.stIdowry$psrf), c("gamma")),"Point est."] < 1.1)
+all(GR.stIdowry$psrf[startsWith(rownames(GR.stIdowry$psrf), c("theta")),"Point est."] <1.1)
+all(GR.stIdowry$psrf[startsWith(rownames(GR.stIdowry$psrf), c("phi")),"Point est."] < 1.1)
+all(GR.stIdowry$psrf[startsWith(rownames(GR.stIdowry$psrf), c("xi")),"Point est."] <1.1)
+all(GR.stIdowry$psrf[startsWith(rownames(GR.stIdowry$psrf), c("zeta")),"Point est."]<1.1)
+
+```
+Summary Statistics and maps of dowry SMR across years
+```{r eval=TRUE,echo=FALSE}
+
+#posterior summary statistic
+
+st_typeIdowryBYM.model$summary$all.chains[c(paste0("theta[", ran.s, "]"), 
+                                paste0("phi[", ran.s, "]"), paste0("gamma[",ran.t,"]"),paste0("xi[", ran.t, "]"),paste0("zeta[", ran.s, ", ", ran.t, "]")),
+                              c("Median", "95%CI_low", "95%CI_low")]
+
+tab= round(st_typeIdowryBYM.model$summary$all.chains[c("sigma2.theta", "sigma2.phi","sigma2.gamma","sigma2.xi","sigma2.zeta","overallRR"), c("Median", "95%CI_low", "95%CI_upp")], 3)
+
+rownames(tab) <- c("$\\sigma^2_{\\theta}$", "$\\sigma^2_{\\phi}$","$\\sigma^2_{\\gamma}$","$\\sigma^2_{\\xi}$" ,"$\\sigma^2_{\\nu}$", 
+                    "Overall RR")
+
+knitr::kable(tab, caption = "Supplementary Table 8. Median and 95%CrI for the 5 variances, the spatial fraction and the overall RR.") %>%  
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "center")
+
+#map of Smoothed total SMR
+RRmap<-UP
+RRmap$RR2001<-st_typeIdowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 1]"), "Median"]
+RRmap$RR2002<-st_typeIdowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 2]"), "Median"]
+RRmap$RR2003<-st_typeIdowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 3]"), "Median"]
+RRmap$RR2004<-st_typeIdowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 4]"), "Median"]
+RRmap$RR2005<-st_typeIdowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 5]"), "Median"]
+RRmap$RR2006<-st_typeIdowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 6]"), "Median"]
+RRmap$RR2007<-st_typeIdowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 7]"), "Median"]
+RRmap$RR2008<-st_typeIdowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 8]"), "Median"]
+RRmap$RR2009<-st_typeIdowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 9]"), "Median"]
+RRmap$RR2010<-st_typeIdowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 10]"), "Median"]
+RRmap$RR2011<-st_typeIdowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 11]"), "Median"]
+RRmap$RR2012<-st_typeIdowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 12]"), "Median"]
+RRmap$RR2013<-st_typeIdowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 13]"), "Median"]
+RRmap$RR2014<-st_typeIdowryBYM.model$summary$all.chains[paste0("RR[", 1:N, ", 14]"), "Median"]
+
+RRmap$RR01cat <- cut(RRmap$RR2001,      breaks=c(min(RRmap$RR2001), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2001)),include.lowest = T)
+RRmap$RR02cat <- cut(RRmap$RR2002,      breaks=c(min(RRmap$RR2002), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2002)),include.lowest = T)
+RRmap$RR03cat <- cut(RRmap$RR2003,      breaks=c(min(RRmap$RR2003), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2003)),include.lowest = T)
+RRmap$RR04cat <- cut(RRmap$RR2004,      breaks=c(min(RRmap$RR2004), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2004)),include.lowest = T)
+RRmap$RR05cat <- cut(RRmap$RR2005,      breaks=c(min(RRmap$RR2005), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2005)),include.lowest = T)
+RRmap$RR06cat <- cut(RRmap$RR2006,      breaks=c(min(RRmap$RR2006), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2006)),include.lowest = T)
+RRmap$RR07cat <- cut(RRmap$RR2007,      breaks=c(min(RRmap$RR2007), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2007)),include.lowest = T)
+RRmap$RR08cat <- cut(RRmap$RR2008,      breaks=c(min(RRmap$RR2008), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2008)),include.lowest = T)
+RRmap$RR09cat <- cut(RRmap$RR2009,      breaks=c(min(RRmap$RR2009), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2009)),include.lowest = T)
+RRmap$RR10cat <- cut(RRmap$RR2010,      breaks=c(min(RRmap$RR2010), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2010)),include.lowest = T)
+RRmap$RR11cat <- cut(RRmap$RR2011,      breaks=c(min(RRmap$RR2011), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2011)),include.lowest = T)
+RRmap$RR12cat <- cut(RRmap$RR2012,      breaks=c(min(RRmap$RR2012), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2012)),include.lowest = T)
+
+RRmap$RR13cat <- cut(RRmap$RR2013,      breaks=c(min(RRmap$RR2013), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2013)),include.lowest = T)
+RRmap$RR14cat <- cut(RRmap$RR2014,      breaks=c(min(RRmap$RR2014), 
+                  .5,1,1.5,2,
+                  max(RRmap$RR2014)),include.lowest = T)
+mapRR2001 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR01cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry SMRs 2001") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2002 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR02cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry SMRs 2002") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2003 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR03cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry SMRs 2003") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2004 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR04cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry SMRs 2004") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2005 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR05cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry SMRs 2005") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2006 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR06cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry SMRs 2006") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2007 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR07cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry SMRs 2007") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2008 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR08cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry SMRs 2008") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2009 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR09cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry SMRs 2009") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2010 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR10cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry SMRs 2010") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2011 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR11cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry SMRs 2011") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2012 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR12cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry SMRs 2012") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2013 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR13cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry SMRs 2013") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRR2014 <- ggplot() + geom_sf(data = RRmap, col = NA) + aes(fill = RR14cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1)+ 
+            guides(fill=guide_legend(title="SMR")) + 
+            ggtitle("Map of dowry SMRs 2014") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+```
+
+
+Supplementary Figure 20. Maps of SMRs across years and regions for dowry
+```{r eval=TRUE,echo=FALSE, fig.align = 'center', fig.dim = c(10, 8)}
+(mapRR2001|mapRR2002|mapRR2003|mapRR2004|mapRR2005)/
+  (mapRR2006|mapRR2007|mapRR2008|mapRR2009|mapRR2010)/
+  (mapRR2011|mapRR2012|mapRR2013|mapRR2014)
+```
+
+
+Supplementary Figure 21. Spaghetti plot of SMRs across years and regions for dowry
+```{r eval=TRUE,echo=FALSE, fig.align = 'center', fig.dim = c(8, 2)}
+#spaghetti plot of spatiotemporal smoothing
+dat.temp <- data.frame(
+  year = data$year, ID_area=data$ID_area, 
+  STRR = st_typeIdowryBYM.model$summary$all.chains[startsWith(rownames(st_typeIdowryBYM.model$summary$all.chains), "RR"),"Median"]) 
+  
+
+dowryspagtI=ggplot() + geom_line(data = dat.temp, aes(x = year, y = STRR, group = ID_area, col = ID_area)) + xlab("Year")+ylab("Dowry SMRs")+ggtitle("Smoothed SMRs of dowry deaths over period 2001-2014 ")+
+  scale_color_viridis_c() + theme_bw()+ theme(plot.title = element_text(hjust = 0.5, size=10, face='bold'))+scale_x_continuous(n.breaks = 12)
+
+dowspag|dowryspagtI
+
+
+
+#plot temporal residual RR
+dat.trend <- data.frame(
+  year = 2001:2014,
+  median = exp(st_typeIdowryBYM.model$summary$all.chains[paste0("gamma[",1:14, "]"),"Median"] + st_typeIdowryBYM.model$summary$all.chains[paste0("xi[",1:14, "]"),"Median"]), 
+  LL = exp(st_typeIdowryBYM.model$summary$all.chains[paste0("gamma[",1:14, "]"), "95%CI_low"] + st_typeIdowryBYM.model$summary$all.chains[paste0("xi[",1:14, "]"),"95%CI_low"]), 
+  UL = exp(st_typeIdowryBYM.model$summary$all.chains[paste0("gamma[",1:14, "]"), "95%CI_upp"] + st_typeIdowryBYM.model$summary$all.chains[paste0("xi[",1:14, "]"),"95%CI_upp"])
+)
+  
+
+dowryresRR=ggplot(data = dat.trend) + 
+  geom_ribbon(aes(x = year, ymin = LL, ymax = UL), fill = viridis(1), alpha = .1) + 
+  geom_line(aes(x = year, y = median), col = viridis(1)) + 
+  geom_point(aes(x = year, y = median), col = viridis(1), size = 1.5) + 
+  ylim(c(0, 2)) + 
+  ylab("Temporal relative risk") +
+  theme_bw() +ggtitle("Temporal Trend Residual")+
+  theme(axis.title.y = element_blank(), 
+        text = element_text(size=8),plot.title = element_text(hjust = 0.5,size = 10,face="bold"))+scale_x_continuous(n.breaks = 12)
+```
+
+
+Supplementary Figure 22. Temporal trend and residual trend of SMRs across years and regions for dowry
+```{r eval=TRUE,echo=FALSE,  fig.align = 'center', fig.dim = c(10, 2)}
+dowrySMRtemp|destemp|dowryresRR
+```
+
+Supplementary Figure 23. Maps of SMRs across years and regions for dowry
+```{r eval=TRUE,echo=FALSE, fig.align = 'center', fig.dim = c(10, 8)}
+#plot spatiotemporal RR
+spattimetypeI<-UP
+spattimetypeI$RR2001 <- st_typeIdowryBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 1]"), "Median"]
+spattimetypeI$RR2002 <- st_typeIdowryBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 2]"), "Median"]
+spattimetypeI$RR2003 <- st_typeIdowryBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 3]"), "Median"]
+spattimetypeI$RR2004 <- st_typeIdowryBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 4]"), "Median"]
+spattimetypeI$RR2005 <- st_typeIdowryBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 5]"), "Median"]
+spattimetypeI$RR2006 <- st_typeIdowryBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 6]"), "Median"]
+spattimetypeI$RR2007 <- st_typeIdowryBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 7]"), "Median"]
+spattimetypeI$RR2008<- st_typeIdowryBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 8]"), "Median"]
+spattimetypeI$RR2009 <- st_typeIdowryBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 9]"), "Median"]
+spattimetypeI$RR2010 <- st_typeIdowryBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 10]"), "Median"]
+spattimetypeI$RR2011 <- st_typeIdowryBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 11]"), "Median"]
+spattimetypeI$RR2012 <- st_typeIdowryBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 12]"), "Median"]
+spattimetypeI$RR2013 <- st_typeIdowryBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 13]"), "Median"]
+spattimetypeI$RR2014 <- st_typeIdowryBYM.model$summary$all.chains[paste0("residRRtypeI[", 1:N, ", 14]"), "Median"]
+
+spattimetypeI$RR01cat <- cut(spattimetypeI$RR2001,      breaks=c(min(spattimetypeI$RR2001), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2001)),include.lowest = T)
+spattimetypeI$RR02cat <- cut(spattimetypeI$RR2002, breaks=c(min(spattimetypeI$RR2002), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2002)),include.lowest = T)
+spattimetypeI$RR03cat <- cut(spattimetypeI$RR2003, breaks=c(min(spattimetypeI$RR2003), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2003)),include.lowest = T)
+spattimetypeI$RR04cat <- cut(spattimetypeI$RR2004, breaks=c(min(spattimetypeI$RR2004), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2004)),include.lowest = T)
+spattimetypeI$RR05cat <- cut(spattimetypeI$RR2005, breaks=c(min(spattimetypeI$RR2005), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2005)),include.lowest = T)
+spattimetypeI$RR06cat <- cut(spattimetypeI$RR2006, breaks=c(min(spattimetypeI$RR2006), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2006)),include.lowest = T)
+spattimetypeI$RR07cat <- cut(spattimetypeI$RR2007, breaks=c(min(spattimetypeI$RR2007), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2007)),include.lowest = T)
+spattimetypeI$RR08cat <- cut(spattimetypeI$RR2008, breaks=c(min(spattimetypeI$RR2008), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2008)),include.lowest = T)
+spattimetypeI$RR09cat <- cut(spattimetypeI$RR2009, breaks=c(min(spattimetypeI$RR2009), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2009)),include.lowest = T)
+spattimetypeI$RR10cat <- cut(spattimetypeI$RR2010, breaks=c(min(spattimetypeI$RR2010), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2010)),include.lowest = T)
+spattimetypeI$RR11cat <- cut(spattimetypeI$RR2011, breaks=c(min(spattimetypeI$RR2011), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2011)),include.lowest = T)
+spattimetypeI$RR12cat <- cut(spattimetypeI$RR2012, breaks=c(min(spattimetypeI$RR2012), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2012)),include.lowest = T)
+spattimetypeI$RR13cat <- cut(spattimetypeI$RR2013, breaks=c(min(spattimetypeI$RR2013), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2013)),include.lowest = T)
+spattimetypeI$RR14cat <- cut(spattimetypeI$RR2014, breaks=c(min(spattimetypeI$RR2014), 
+                  0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8,
+                  max(spattimetypeI$RR2014)),include.lowest = T)
+
+mapRRTI2001 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR01cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2001") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2002 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR02cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2002") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2003 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR03cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2003") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2004 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR04cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2004") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2005 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR05cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2005") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2006 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR06cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2006") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2007 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR07cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2007") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2008 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR08cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2008") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2009 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR09cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2009") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2010 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR10cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2010") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2011 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR11cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2011") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2012 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR12cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2012") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2013 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR13cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1) + 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2013") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+mapRRTI2014 <- ggplot() + geom_sf(data = spattimetypeI, col = NA) + aes(fill = RR14cat) +
+            theme_bw() + scale_fill_viridis_d(direction = 1)+ 
+            guides(fill=guide_legend(title="RR")) + 
+            ggtitle("Spatiotemporal RR 2014") + 
+            theme(text = element_text(size=8), 
+                  axis.text.x = element_blank(), 
+                  axis.text.y = element_blank()
+            )
+
+(mapRRTI2001|mapRRTI2002|mapRRTI2003|mapRRTI2004|mapRRTI2005)/
+  (mapRRTI2006|mapRRTI2007|mapRRTI2008|mapRRTI2009|mapRRTI2010)/
+  (mapRRTI2011|mapRRTI2012|mapRRTI2013|mapRRTI2014)
+
+```
+WAIC comparison
+```{r,fig.align='centre'}
+rape.WAIC <- data.frame(model = c("BYM", "Separable Spatio-temporal", "Spatio-temporal Type I Interaction"), 
+                       WAIC = round(c(rapeBYM.model$WAIC, st_rapeBYM.model$WAIC, st_typeIrapeBYM.model$WAIC))
+)
+
+row.names(rape.WAIC) <- NULL
+
+knitr::kable(rape.WAIC, caption = "Supplementary Table 2. WAIC of the different models of rape") %>%  kable_styling(bootstrap_options = "striped", full_width = F, position = "center")
+
+
+dowry.WAIC <- data.frame(model = c("BYM", "Separable Spatio-temporal", "Spatio-temporal Type I Interaction"), 
+                       WAIC = round(c(dowryBYM.model$WAIC, st_dowryBYM.model$WAIC, st_typeIdowryBYM.model$WAIC))
+)
+
+row.names(rape.WAIC) <- NULL
+
+knitr::kable(dowry.WAIC, caption = "Supplementary Table 3. WAIC of the different models of dowry") %>%  kable_styling(bootstrap_options = "striped", full_width = F, position = "center")
+```
+Variances explained for BYM Model
+```{r,fig.align='centre'}
+#posterior summary statistic
+tab= round(rapeBYM.model$summary$all.chains[c("sigma2.theta", "sigma2.phi","sigma2.phi.marginal","frac.spatial","overallRR"), c("Median", "95%CI_low", "95%CI_upp")], 3)
+
+rownames(tab) <- c("$\\sigma^2_{\\theta}$", "$\\sigma^2_{\\phi}$","$\\sigma^2_{\\phi marg}$","Spatial fraction" , 
+                    "Overall RR")
+
+knitr::kable(tab, caption = "Supplementary Table 4. Median and 95%CrI for the 3 variances, the spatial fraction and the overall RR.") %>%  
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "center")
+
+
+tab= round(dowryBYM.model$summary$all.chains[c("sigma2.theta", "sigma2.phi","sigma2.phi.marginal","frac.spatial","overallRR"), c("Median", "95%CI_low", "95%CI_upp")], 3)
+
+rownames(tab) <- c("$\\sigma^2_{\\theta}$", "$\\sigma^2_{\\phi}$","$\\sigma^2_{\\phi marg}$","Spatial fraction" , 
+                    "Overall RR")
+
+knitr::kable(tab, caption = "Supplementary Table 5.Median and 95%CrI for the 3 variances, the spatial fraction and the overall RR.") %>%  
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "center")
+```
